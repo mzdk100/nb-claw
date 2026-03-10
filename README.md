@@ -7,6 +7,10 @@
 - **聚焦易用性**：没有重量级的框架结构，用户配置友好
 - **嵌入 Python 解释器**：模型可以通过执行 Python 脚本来控制设备
 - **Shell 命令支持**：支持执行 shell 命令来与操作系统交互
+- **强大的记忆系统**：
+  - 分层记忆架构（短期/长期/个人记忆）
+  - 语义搜索（基于Embedding模型和余弦相似度）
+  - 重要性评分和自动清理
 - **工具函数**：
   - `run_py`：执行 Python 代码并返回结果
   - `py_mods`：列出可用的 Python 模块
@@ -16,7 +20,8 @@
 - **TOML 配置文件**：使用标准的 TOML 格式进行配置
 - **硬编码工具说明**：工具使用说明已硬编码在程序中，用户不可修改
 - **非标准工具调用支持**：支持解析非标准工具调用格式，增强模型兼容性
-- **上下文长度优化**：避免不必要的上下文占用，系统仅仅注册三个工具，但却能实现强大的能力
+- **上下文长度优化**：避免不必要的上下文占用，系统仅仅注册3个工具，但却能实现强大的能力
+- **自动重试**：当聊天过程中遇到请求错误，系统会自动重试，重试次数可以在配置中修改
 
 ## 快速开始
 
@@ -24,27 +29,41 @@
 
 ```bash
 cargo build --release
+cargo install --path .
 ```
 
 ### 配置
+
+```bash
+# 初始化默认配置
+nb-claw --init-config
+
+# 交互式配置
+nb-claw --config-wizard
+
+# 查看帮助
+nb-claw --help
+```
 
 编辑 `config/config.toml` 文件：
 
 ```toml
 [llm]
-provider = "openai"  # openai, anthropic, zhipu, aliyun, ollama, deepseek
+provider = "openai"  # openai, anthropic, google, longcat, moonshot, zhipu, aliyun, ollama, deepseek, xiaomi, volcengine, tencent
 model = "gpt-4o-mini"
 api_key = ""  # 或通过环境变量 OPENAI_API_KEY 设置
-base_url = ""  # 可选，使用提供商标准 URL
+# base_url = ""  # 可选
 
 [python]
 sandbox = true
-max_execution_time = 30
-max_memory_mb = 512
+timeout_secs = 30
 
 [memory]
 storage_path = "./data/memory"
 max_conversations = 100
+max_short_term = 50     # 短期记忆最大数量
+max_long_term = 1000    # 长期记忆最大数量
+auto_consolidation = true
 
 [system]
 # 基础系统提示词（工具说明会自动添加到末尾）
@@ -55,6 +74,27 @@ Your goal is to help users by performing tasks, answering questions, and solving
 When you need to perform computations or process data, use the appropriate tools. Always check the tool results and continue your work based on the output."""
 max_context_length = 16000
 ```
+
+如需了解更多，请参见[配置指南](CONFIG_GUIDE.md)
+
+### 腾讯混元配置
+
+使用腾讯混元（Hunyuan）时，需要配置 `secret_id` 和 `secret_key` 而不是 `api_key`：
+
+```toml
+[llm]
+provider = "tencent"
+model = "hunyuan-pro"
+secret_id = "your_secret_id"  # 或通过环境变量 TENCENT_SECRET_ID 设置
+secret_key = "your_secret_key"  # 或通过环境变量 TENCENT_SECRET_KEY 设置
+base_url = "https://hunyuan.tencentcloudapi.com"
+```
+
+**注意**：腾讯混元使用的是腾讯云 API 的认证方式，需要：
+- `secret_id`：腾讯云 API 的 Secret ID
+- `secret_key`：腾讯云 API 的 Secret Key
+
+这些凭证可以在[腾讯云访问管理控制台](https://console.cloud.tencent.com/cam/capi)创建和获取。
 
 ### 运行
 
@@ -98,12 +138,11 @@ nb-claw/
 
 ### 工具说明
 
-工具使用说明已经硬编码在程序中，包含以下三个工具：
+工具使用说明已经硬编码在程序中，包含以下3个工具：
 
 1. **run_py** - 执行 Python 代码
    - 只能使用 Python 内置模块（无第三方包）
    - 多行代码支持
-   - 将结果赋值给 `ret` 变量返回
 
 2. **py_mods** - 列出 Python 模块
    - 列出所有可用的 Python 内置模块
@@ -117,35 +156,10 @@ nb-claw/
 
 为了兼容无法返回标准工具调用格式的模型，系统支持解析以下非标准工具调用格式：
 
-#### 格式 1：单个参数
+#### Markdown
 
-```xml
-<tool_call>tool_name<arg_key>param_name</arg_key><arg_value>param_value</arg_value>
-```
-
-示例：
-```
-我需要执行命令<tool_call>run_cmd<arg_key>command</arg_key><arg_value>LC_ALL=C date</arg_value>
-```
-
-#### 格式 2：多个参数
-
-```xml
-<tool_call>tool_name<args>
-  <arg_key>param1</arg_key><arg_value>value1</arg_value>
-  <arg_key>param2</arg_key><arg_value>value2</arg_value>
-</args>
-```
-
-示例：
-```
-让我运行代码<tool_call>run_py<args><arg_key>code</arg_key><arg_value>ret = 2 + 2</arg_value></args>
-```
-
-#### 格式 3：无参数
-
-```
-让我查看模块<tool_call>py_mods
+```python
+ret = 1+1
 ```
 
 这种冗余设计确保即使模型无法生成标准的工具调用格式，系统也能正常解析和执行工具调用，避免中途中止。

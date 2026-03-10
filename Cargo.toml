@@ -1,0 +1,26 @@
+[package]
+name = "nb-claw"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.102"
+async-stream = "0.3.6"
+chrono = { version = "0.4.44", features = ["serde"] }
+encoding_rs = "0.8.35"
+clap = { version = "4.5.60", features = ["derive"] }
+fastembed = "5.12.0"
+futures-util = "0.3.32"
+llm-connector = { path = "F:/workspace/llm-connector", features = ["reqwest", "streaming", "toml", "tencent"] }
+pyo3 = { version = "0.28.2", features = ["auto-initialize", "experimental-async"] }
+postcard = { version = "1.1.1", features = ["alloc"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.50.0", features = ["full"] }
+toml = "1.0.6"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+uuid = { version = "1.22.0", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tempfile = "3.26.0"
