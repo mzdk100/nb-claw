@@ -222,6 +222,10 @@ for m in memories:
 # Decay importance of matching memories
 # Just reduce the importance, no need to insist on complete deletion
 forgot_count = memory.forget("About Alice's name", limit=3)
+
+## UI Automation (cross-platform)
+
+Importing builtin module `uiauto`, and use `help(uiauto)` to check the help.
 ```
 "#;
 

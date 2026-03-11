@@ -224,7 +224,8 @@ impl Default for PythonConfig {
                 "string".into(),
                 "textwrap".into(),
                 "urllib".into(),
-                "memory".into(), // Custom memory module
+                "memory".into(),
+                "uiauto".into(), // UI Automation module
             ],
         }
     }
@@ -610,6 +611,7 @@ fn default_safe_modules() -> Vec<String> {
         "textwrap".into(),
         "urllib".into(),
         "memory".into(),
+        "uiauto".into(), // UI Automation module
     ]
 }
 fn default_memory_path() -> String {

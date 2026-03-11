@@ -94,9 +94,10 @@ The tool returns STDOUT, STDERR, and all defined variables as results."#.into(),
             },
             ToolDefinition {
                 name: "py_mods".to_string(),
-                description: r#"List all available Python built-in modules that can be used in the run_py tool.
+                description: r#"List all available Python built-in modules that can be used in the `run_py` tool.
 
 This tool helps you discover which Python modules are available before executing code. It returns a comma-separated list of module names.
+You can call `help(module_name)` for a module while running the python code to view specific help instructions.
 
 Use this tool when you need to:
 - Check if a specific module is available
@@ -186,8 +187,8 @@ dir /A"#.to_string(),
                 if !result.stderr.is_empty() {
                     response.push_str(&format!("STDERR:\n{}\n", result.stderr));
                 }
-                if let Some(r) = result.result {
-                    response.push_str(&format!("RESULT: {}", r));
+                if let Some(vars) = result.vars {
+                    response.push_str(&format!("VARS:\n{}", vars));
                 }
 
                 ToolCallResult {

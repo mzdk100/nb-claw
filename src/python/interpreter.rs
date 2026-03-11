@@ -1,6 +1,7 @@
 //! Embedded Python interpreter
 
 use {
+    super::Module,
     crate::config::PythonConfig,
     anyhow::Result,
     pyo3::{PyResult, prelude::*, types::PyDict},
@@ -13,10 +14,6 @@ use {
     tracing::{debug, error, warn},
 };
 
-pub trait Module<'a>: IntoPyObject<'a> {
-    fn get_name() -> &'static str;
-}
-
 /// Result of Python script execution
 #[derive(Debug, Clone)]
 pub struct ExecutionResult {
@@ -24,8 +21,8 @@ pub struct ExecutionResult {
     pub stdout: String,
     /// Standard error
     pub stderr: String,
-    /// Execution result (if any)
-    pub result: Option<String>,
+    /// Variables returned by script (if any)
+    pub vars: Option<String>,
     /// Whether execution succeeded
     pub success: bool,
     /// Execution time in milliseconds (if timed out, will be None)
@@ -34,11 +31,11 @@ pub struct ExecutionResult {
 
 impl ExecutionResult {
     /// Create a successful execution result
-    pub fn success(stdout: String, result: Option<String>, execution_time_ms: u64) -> Self {
+    pub fn success(stdout: String, vars: Option<String>, execution_time_ms: u64) -> Self {
         Self {
             stdout,
             stderr: Default::default(),
-            result,
+            vars,
             success: true,
             execution_time_ms: Some(execution_time_ms),
         }
@@ -49,7 +46,7 @@ impl ExecutionResult {
         Self {
             stdout: Default::default(),
             stderr,
-            result: None,
+            vars: None,
             success: false,
             execution_time_ms: None,
         }
@@ -60,7 +57,7 @@ impl ExecutionResult {
         Self {
             stdout: Default::default(),
             stderr: "Execution timed out".into(),
-            result: None,
+            vars: None,
             success: false,
             execution_time_ms: None,
         }
@@ -83,8 +80,8 @@ impl PythonInterpreter {
         Ok(Self { config })
     }
 
-    /// Register modules globally in `sys.modules`
-    pub fn register_modules_global<M>(modules: Vec<M>)
+    /// Register a module globally in `sys.modules`
+    pub fn register_module_global<M>(module: M)
     where
         M: for<'a> Module<'a>,
     {
@@ -93,13 +90,11 @@ impl PythonInterpreter {
                 && let Ok(sys_modules) = sys.getattr("modules")
                 && let Ok(modules_dict) = sys_modules.cast_into::<PyDict>()
             {
-                for m in modules {
-                    let _ = modules_dict.set_item(M::get_name(), m);
-                    debug!(
-                        "Module `{}` registered globally in sys.modules",
-                        M::get_name()
-                    );
-                }
+                let _ = modules_dict.set_item(M::get_name(), module);
+                debug!(
+                    "Module `{}` registered globally in sys.modules",
+                    M::get_name()
+                );
             }
         });
     }
@@ -384,12 +379,12 @@ mod tests {
         // Test simple math (single variable)
         let result = interpreter.execute("x = 2 + 2").await?;
         assert!(result.success);
-        assert!(result.result.unwrap().contains("x = 4"));
+        assert!(result.vars.unwrap().contains("x = 4"));
 
         // Test string operations
         let result = interpreter.execute("s = 'hello' + ' world'").await?;
         assert!(result.success);
-        assert!(result.result.unwrap().contains("s = 'hello world'"));
+        assert!(result.vars.unwrap().contains("s = 'hello world'"));
 
         Ok(())
     }
@@ -471,7 +466,7 @@ mod tests {
             .execute("import math; x = math.sqrt(16)")
             .await?;
         assert!(result.success);
-        assert!(result.result.unwrap().contains("x = 4.0"));
+        assert!(result.vars.unwrap().contains("x = 4.0"));
 
         Ok(())
     }
@@ -501,19 +496,19 @@ mod tests {
         // Code that sets variables should return all of them
         let result = interpreter.execute("x = 42").await?;
         assert!(result.success);
-        assert!(result.result.unwrap().contains("x = 42"));
+        assert!(result.vars.unwrap().contains("x = 42"));
 
         // Code with multiple variables
         let result = interpreter.execute("a = 1\nb = 2").await?;
         assert!(result.success);
-        let result_str = result.result.unwrap();
+        let result_str = result.vars.unwrap();
         assert!(result_str.contains("a = 1"));
         assert!(result_str.contains("b = 2"));
 
         // Code without any variable definitions should return None
         let result = interpreter.execute("print('hello')").await?;
         assert!(result.success);
-        assert_eq!(result.result, None);
+        assert_eq!(result.vars, None);
 
         Ok(())
     }

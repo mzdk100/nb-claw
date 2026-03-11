@@ -7,6 +7,8 @@ mod config;
 mod llm;
 mod memory;
 mod python;
+#[cfg(windows)]
+mod uiauto;
 
 use {
     clap::Parser,
@@ -94,7 +96,11 @@ async fn main() -> anyhow::Result<()> {
 
     // Create memory manager for Python
     let memory_module = memory::create_memory_module(Arc::downgrade(&memory))?;
-    PythonInterpreter::register_modules_global(vec![memory_module]);
+    // Create and register UI automation module
+    let uiauto_module = uiauto::create_uiauto_module()?;
+    // Register memory module
+    PythonInterpreter::register_module_global(memory_module);
+    PythonInterpreter::register_module_global(uiauto_module);
 
     // Test mode
     if args.test {

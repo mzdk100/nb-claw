@@ -26,5 +26,8 @@ git = "https://github.com/mzdk100/llm-connector.git"
 # path = "F:/workspace/llm-connector"
 features = ["reqwest", "streaming", "toml", "tencent"]
 
+[target.'cfg(windows)'.dependencies]
+uiautomation = { version = "0.24.4", features = ["input", "control", "pattern"] }
+
 [dev-dependencies]
 tempfile = "3.26.0"
