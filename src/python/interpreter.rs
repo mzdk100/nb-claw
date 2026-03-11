@@ -246,14 +246,32 @@ impl PythonInterpreter {
             sys.setattr("stderr", original_stderr)?;
 
             // Get all user-defined variables (exclude internal/magic variables)
+            const MAX_VAR_LEN: usize = 128;
             let mut variables = Vec::new();
             for (key, value) in locals.iter() {
                 if let Ok(var_name) = key.extract::<String>() {
                     // Skip internal/magic variables (starting with _)
-                    if !var_name.starts_with('_') {
-                        if let Ok(var_repr) = value.repr() {
-                            variables.push(format!("{} = {}", var_name, var_repr));
-                        }
+                    if !var_name.starts_with('_')
+                        && let Ok(var_repr) = value.repr()
+                    {
+                        let repr_str = var_repr.to_string();
+                        let truncated = if repr_str.len() > MAX_VAR_LEN {
+                            // Find valid UTF-8 boundary
+                            let boundary = repr_str
+                                .char_indices()
+                                .take_while(|(idx, _)| *idx < MAX_VAR_LEN)
+                                .last()
+                                .map(|(idx, c)| idx + c.len_utf8())
+                                .unwrap_or(0);
+                            format!(
+                                "{}... <truncated, {} bytes>",
+                                &repr_str[..boundary],
+                                repr_str.len()
+                            )
+                        } else {
+                            repr_str
+                        };
+                        variables.push(format!("{} = {}", var_name, truncated));
                     }
                 }
             }
@@ -279,8 +297,9 @@ impl PythonInterpreter {
         let c_code = CString::new(code)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid code: {}", e)))?;
 
-        // Use py.run() which supports multi-line statements and expressions
-        py.run(c_code.as_c_str(), None, Some(locals))?;
+        // Use py.run() with locals as both globals and locals
+        // This ensures imported modules are accessible inside functions
+        py.run(c_code.as_c_str(), Some(locals), Some(locals))?;
         Ok(())
     }
 
@@ -521,6 +540,98 @@ mod tests {
         })?;
         assert!(!interpreter.has_module("memory"));
         assert!(interpreter.has_module("json"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_module_accessible_in_function() -> Result<()> {
+        // Test that imported modules are accessible inside functions
+        let interpreter = PythonInterpreter::new(PythonConfig {
+            sandbox: false,
+            ..Default::default()
+        })?;
+
+        let code = r#"
+import re
+
+def test_func():
+    # This should work - re module should be accessible
+    return re.sub(r'\d+', 'X', 'abc123def')
+
+result = test_func()
+"#;
+        let result = interpreter.execute(code).await?;
+        assert!(result.success, "Execution failed: {}", result.stderr);
+        assert!(
+            result.stdout.contains("abcXdef")
+                || result
+                    .vars
+                    .as_ref()
+                    .map_or(false, |v| v.contains("abcXdef")),
+            "Expected 'abcXdef' in output, got stdout: {}, vars: {:?}",
+            result.stdout,
+            result.vars
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_global_keyword() -> Result<()> {
+        // Test that global keyword works correctly when globals == locals
+        let interpreter = PythonInterpreter::new(PythonConfig::default())?;
+
+        let code = r#"
+counter = 0
+
+def increment():
+    global counter
+    counter += 1
+
+increment()
+increment()
+"#;
+        let result = interpreter.execute(code).await?;
+        assert!(result.success, "Execution failed: {}", result.stderr);
+        assert!(
+            result
+                .vars
+                .as_ref()
+                .map_or(false, |v: &String| v.contains("counter = 2")),
+            "Expected counter=2, got: {:?}",
+            result.vars
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_nonlocal_keyword() -> Result<()> {
+        // Test that nonlocal keyword works correctly (closure behavior)
+        let interpreter = PythonInterpreter::new(PythonConfig::default())?;
+
+        let code = r#"
+def outer():
+    count = 0
+    def inner():
+        nonlocal count
+        count += 1
+        return count
+    return inner()
+
+result = outer()
+"#;
+        let result = interpreter.execute(code).await?;
+        assert!(result.success, "Execution failed: {}", result.stderr);
+        assert!(
+            result
+                .vars
+                .as_ref()
+                .map_or(false, |v: &String| v.contains("result = 1")),
+            "Expected result=1, got: {:?}",
+            result.vars
+        );
 
         Ok(())
     }

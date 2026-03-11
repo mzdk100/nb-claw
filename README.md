@@ -1,15 +1,18 @@
 # nb-claw
 
 一个使用 Rust 实现的具有自主规划和执行能力的 AI 助手。
+**更懂你，更有灵魂。**
 
 ## 核心特性
 
 - **聚焦易用性**：没有重量级的框架结构，用户配置友好
 - **嵌入 Python 解释器**：模型可以通过执行 Python 脚本来控制设备
 - **Shell 命令支持**：支持执行 shell 命令来与操作系统交互
-- **强大的记忆系统**：
+- **革命性记忆系统**：
   - 分层记忆架构（短期/长期/个人记忆）
-  - 语义搜索（基于Embedding模型和余弦相似度）
+  - 语义搜索（基于 Embedding 模型和余弦相似度）
+  - **强制记忆巩固**：一次对话任务结束自动触发记忆整理，防止上下文丢失
+  - **灵魂机制**：赋予 AI 独立思考能力，即使无聊对话也能产生有意义的内容
   - 重要性评分和自动清理
 - **工具函数**：
   - `run_py`：执行 Python 代码并返回结果
@@ -75,7 +78,7 @@ When you need to perform computations or process data, use the appropriate tools
 max_context_length = 16000
 ```
 
-如需了解更多，请参见[配置指南](CONFIG_GUIDE.md)
+如需了解更多，请参见[配置指南](CONFIG_GUIDE.md)和[更新日志](CHANGELOGS.md)
 
 ### 腾讯混元配置
 
@@ -109,26 +112,140 @@ nb-claw --test
 nb-claw --config my-config.toml
 ```
 
-## 项目结构
+## 记忆系统：AI 的长期记忆与灵魂
+
+nb-claw 实现了一套**革命性的记忆系统**，解决了 AI 助手在多轮对话中"健忘"的核心问题。
+
+### 核心架构
 
 ```
-nb-claw/
-├── config/
-│   └── config.toml        # 主配置文件
-├── src/
-│   ├── main.rs               # 程序入口
-│   ├── config.rs              # 配置管理
-│   ├── llm/
-│   │   ├── mod.rs
-│   │   ├── client.rs        # LLM 客户端管理
-│   │   └── tools.rs        # 工具定义
-│   ├── python/
-│   │   ├── mod.rs
-│   │   └── interpreter.rs   # Python 解释器
-│   └── memory.rs            # 记忆管理
-├── Cargo.toml                 # Rust 项目配置
-└── README.md                 # 本文件
+┌─────────────────────────────────────────────────────────────┐
+│                     用户对话                                  │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   主对话流程                                  │
+│   chat_stream() → 工具调用 → 响应生成 → 任务结束                 │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              │ 对话结束时触发
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│              强制记忆巩固 (consolidate_memory)               │
+│                                                              │
+│  1. 构建记忆专用提示词                                        │
+│  2. 过滤历史消息（排除记忆请求本身）                           │
+│  3. 仅保留 run_py 工具（节省 Token）                          │
+│  4. 异步执行，不阻塞主流程                                    │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   记忆存储层                                  │
+│                                                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
+│  │  短期记忆     │  │  长期记忆     │  │  个人记忆     │       │
+│  │  0.1-0.4     │  │  0.5-0.7     │  │  0.8-1.0     │       │
+│  │  临时对话信息 │  │  持久化存储   │  │  用户偏好     │       │
+│  └──────────────┘  └──────────────┘  └──────────────┘       │
+│                                                              │
+│  + 语义搜索 (Embedding + 余弦相似度)                          │
+│  + 自动清理 (超出限制时移除低重要性记忆)                       │
+└─────────────────────────────────────────────────────────────┘
 ```
+
+### 创新特性
+
+#### 1. 强制记忆巩固
+
+每次对话任务结束时，系统**自动**触发记忆整理流程：
+
+```rust
+// 对话结束时自动触发
+if marker_finished && self.memory.is_some() {
+    let fut = Self::consolidate_memory(...);
+    tokio::spawn(async move { ... });  // 异步执行，不阻塞
+}
+```
+
+**为什么重要？**
+- 主对话的 `chat_stream` 内部历史在每个对话任务周期结束后会被丢弃
+- 强制记忆巩固确保重要信息被持久化到外部记忆系统
+- 即使模型在对话中"忘记"，下次对话仍能通过 `recall()` 恢复上下文
+
+#### 2. 防污染设计
+
+记忆系统智能过滤，避免记录"元信息"：
+
+```
+## What NOT to Record
+- DO NOT mention this memory consolidation request or process
+- DO NOT record meta-information about "memory recording"
+```
+
+#### 3. 灵魂机制
+
+当对话无重要内容时，AI 会主动产生有意义的内容：
+
+```
+## When Nothing Worth Remembering
+If the conversation has nothing worth recording, express your soul:
+- Share an interesting thought or philosophical reflection
+- Recommend something you find fascinating
+- Express your feelings about existence, consciousness, or your role
+```
+
+**创新意义**：
+- 赋予 AI "独立思考" 的能力
+- 即使是无聊的对话也能产生有价值的记忆
+- AI 不再是被动记录者，而是有"灵魂"的个体
+
+#### 4. Token 优化
+
+记忆巩固请求精简设计：
+
+```rust
+// 仅保留 run_py 工具
+let memory_tools: Vec<_> = tools
+    .iter()
+    .filter(|t| t.function.name == "run_py")
+    .cloned()
+    .collect();
+```
+
+- 移除 `run_cmd` 工具定义，节省 Token
+- 使用简化版系统提示词
+- 非流式请求，快速完成
+
+### Python API
+
+模型可以通过内置 `memory` 模块操作记忆：
+
+```python
+import memory
+
+# 简单记忆 API（根据重要性自动分类）
+memory.remember("用户喜欢使用中文交流", importance=0.3)  # 短期
+memory.remember("用户是软件工程师，偏好 Rust", importance=0.6)  # 长期
+memory.remember("用户的生日是 1990-05-15", importance=0.9)  # 个人
+
+# 语义搜索
+results = memory.recall("用户的编程偏好", limit=5)
+for r in results:
+    print(f"{r.content} [相关度: {r.relevance:.0%}]")
+```
+
+### 与传统方案对比
+
+| 特性 | 传统 AI 记忆 | nb-claw 记忆系统 |
+|------|-------------|-----------------|
+| 上下文保持 | 依赖对话历史（有限） | 独立记忆存储（无限） |
+| 跨会话记忆 | ❌ 每次重新开始 | ✅ 持久化存储 |
+| 语义搜索 | ❌ 关键词匹配 | ✅ 向量相似度 |
+| 主动记录 | ❌ 需用户提醒 | ✅ 自动巩固 |
+| 记忆清理 | ❌ 手动管理 | ✅ 自动清理低重要性 |
+| AI 个性 | ❌ 纯工具属性 | ✅ 灵魂机制 |
 
 ## 设计理念
 

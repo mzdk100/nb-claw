@@ -10,8 +10,29 @@ use {
     encoding_rs::GBK,
     serde::{Deserialize, Serialize},
     serde_json::{Value, json},
+    tokio::process::Command,
     tracing::info,
 };
+
+/// Maximum length for stdout/stderr output (keep tail)
+const MAX_OUTPUT_LEN: usize = 4000;
+
+/// Truncate output to keep the tail (most recent output is more important)
+fn truncate_output(output: &str, max_len: usize) -> String {
+    if output.len() <= max_len {
+        output.to_string()
+    } else {
+        let skip = output.len() - max_len;
+        // Find valid UTF-8 boundary at or after skip position
+        // by finding the first char that starts at or after skip
+        let boundary = output
+            .char_indices()
+            .find(|(idx, _)| *idx >= skip)
+            .map(|(idx, _)| idx)
+            .unwrap_or(skip);
+        format!("<truncated {} bytes>...\n{}", boundary, &output[boundary..])
+    }
+}
 
 /// Result of a tool call
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,10 +96,6 @@ Example usage:
 x = 2 + 2
 y = x * 3
 print(f"Result: {y}")
-
-Example with calculations:
-a = sum(range(10))
-b = a ** 2
 
 The tool returns STDOUT, STDERR, and all defined variables as results."#.into(),
                 parameters: json!({
@@ -152,7 +169,7 @@ dir /A"#.to_string(),
         match tool_name {
             "run_py" => self.execute_run_py(arguments, call_id).await,
             "py_mods" => self.execute_py_mods(arguments, call_id),
-            "run_cmd" => self.execute_run_cmd(arguments, call_id),
+            "run_cmd" => self.execute_run_cmd(arguments, call_id).await,
             _ => ToolCallResult {
                 tool_name: tool_name.to_string(),
                 call_id,
@@ -182,10 +199,16 @@ dir /A"#.to_string(),
             Ok(result) => {
                 let mut response = String::new();
                 if !result.stdout.is_empty() {
-                    response.push_str(&format!("STDOUT:\n{}\n", result.stdout));
+                    response.push_str(&format!(
+                        "STDOUT:\n{}\n",
+                        truncate_output(&result.stdout, MAX_OUTPUT_LEN)
+                    ));
                 }
                 if !result.stderr.is_empty() {
-                    response.push_str(&format!("STDERR:\n{}\n", result.stderr));
+                    response.push_str(&format!(
+                        "STDERR:\n{}\n",
+                        truncate_output(&result.stderr, MAX_OUTPUT_LEN)
+                    ));
                 }
                 if let Some(vars) = result.vars {
                     response.push_str(&format!("VARS:\n{}", vars));
@@ -226,7 +249,7 @@ dir /A"#.to_string(),
     }
 
     /// Execute shell command (run_cmd tool)
-    fn execute_run_cmd(&self, arguments: &Value, call_id: String) -> ToolCallResult {
+    async fn execute_run_cmd(&self, arguments: &Value, call_id: String) -> ToolCallResult {
         let command = match arguments.get("command") {
             Some(Value::String(s)) => s.clone(),
             _ => {
@@ -243,23 +266,34 @@ dir /A"#.to_string(),
 
         let output = if cfg!(target_os = "windows") {
             // On Windows, use cmd /c
-            std::process::Command::new("cmd")
-                .args(["/C", &command])
-                .output()
+            Command::new("cmd").args(["/C", &command]).output()
         } else {
             // On Unix/Linux/Mac, use sh -c
-            std::process::Command::new("sh")
-                .args(["-c", &command])
-                .output()
+            Command::new("sh").args(["-c", &command]).output()
         };
 
-        match output {
+        match output.await {
             Ok(output) => {
                 let (stdout, stderr) = if cfg!(target_os = "windows") {
-                    // On Windows, decode using GBK (CP936)
-                    let (stdout, _, _) = GBK.decode(&output.stdout);
-                    let (stderr, _, _) = GBK.decode(&output.stderr);
-                    (stdout.into_owned(), stderr.into_owned())
+                    // On Windows, try UTF-8 first, fallback to GBK
+                    fn decode_windows(data: &[u8]) -> String {
+                        // Try UTF-8 first (Python outputs UTF-8 by default)
+                        if let Ok(s) = String::from_utf8(data.to_vec()) {
+                            return s;
+                        }
+                        // Fallback to GBK (CP936) for legacy commands
+                        let (decoded, _, had_errors) = GBK.decode(data);
+                        if had_errors {
+                            // If GBK also fails, use lossy UTF-8
+                            String::from_utf8_lossy(data).to_string()
+                        } else {
+                            decoded.into_owned()
+                        }
+                    }
+                    (
+                        decode_windows(&output.stdout),
+                        decode_windows(&output.stderr),
+                    )
                 } else {
                     (
                         String::from_utf8_lossy(&output.stdout).to_string(),
@@ -270,10 +304,16 @@ dir /A"#.to_string(),
 
                 let mut response = String::new();
                 if !stdout.is_empty() {
-                    response.push_str(&format!("STDOUT:\n{}\n", stdout));
+                    response.push_str(&format!(
+                        "STDOUT:\n{}\n",
+                        truncate_output(&stdout, MAX_OUTPUT_LEN)
+                    ));
                 }
                 if !stderr.is_empty() {
-                    response.push_str(&format!("STDERR:\n{}\n", stderr));
+                    response.push_str(&format!(
+                        "STDERR:\n{}\n",
+                        truncate_output(&stderr, MAX_OUTPUT_LEN)
+                    ));
                 }
                 match exit_code {
                     Some(code) => response.push_str(&format!("EXIT CODE: {}", code)),

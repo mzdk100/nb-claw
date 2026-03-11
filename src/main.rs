@@ -7,7 +7,6 @@ mod config;
 mod llm;
 mod memory;
 mod python;
-#[cfg(windows)]
 mod uiauto;
 
 use {
