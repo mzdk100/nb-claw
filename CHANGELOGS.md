@@ -1,5 +1,22 @@
 # 更新日志
 
+## [2026-03-12] UI 自动化模块平台无关重构
+
+### 🔄 重构
+
+#### UI 自动化核心架构升级
+- **Trait 抽象层**：新增 `UIAutomation` trait 定义统一的 UI 自动化接口（18 个方法）
+- **平台工厂函数**：通过 `create_automation()` 返回平台特定实现，Python 模块导出实现平台无关
+- **条件编译**：使用 `#[cfg(windows)]` 和 `#[cfg(target_os = "linux")]` 实现跨平台支持
+- **动态分发**：使用 `Box<dyn UIAutomation>` 实现运行时多态
+
+### 📁 文件变更
+
+- **修改** `src/uiauto.rs` - Trait 定义和平台工厂函数
+- **修改** `src/uiauto/manager.rs` - 平台无关的 Python 绑定
+- **重构** `src/uiauto/windows.rs` - 实现 `UIAutomation` trait
+- **新增** `src/uiauto/linux.rs` - 实现 `UIAutomation` trait
+
 ## [2026-03-11] 记忆系统大升级 & 多项 Bug 修复
 
 ### ✨ 新特性

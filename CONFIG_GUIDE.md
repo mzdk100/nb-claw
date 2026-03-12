@@ -433,7 +433,7 @@ system_prompt = "You are a helpful assistant."
 ```toml
 [llm]
 provider = "ollama"
-model = "qwen2.5:7b"
+model = "qwen3.5:9b"
 
 [python]
 sandbox = true

@@ -15,15 +15,12 @@
 //! ```
 
 use {
-    super::{windows::WindowsUIAutomation, *},
+    super::{
+        ControlInfo, ControlType, KeyModifiers, ScrollDirection, WindowInfo, create_automation,
+    },
     crate::python::Module,
     pyo3::{exceptions::PyRuntimeError, prelude::*},
 };
-
-/// Create a new UI Automation instance
-fn create_automation() -> PyResult<WindowsUIAutomation> {
-    WindowsUIAutomation::new().map_err(|e| PyRuntimeError::new_err(e.to_string()))
-}
 
 /// Python wrapper for Control - represents a UI control
 #[pyclass(skip_from_py_object)]
@@ -87,35 +84,40 @@ impl Control {
 
     /// Click this control
     fn click(&self) -> PyResult<()> {
-        create_automation()?
+        create_automation()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
             .click(&self.inner.id)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Double click this control
     fn double_click(&self) -> PyResult<()> {
-        create_automation()?
+        create_automation()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
             .double_click(&self.inner.id)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Right click this control
     fn right_click(&self) -> PyResult<()> {
-        create_automation()?
+        create_automation()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
             .right_click(&self.inner.id)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Get text from this control
     fn get_text(&self) -> PyResult<String> {
-        create_automation()?
+        create_automation()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
             .get_text(&self.inner.id)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Set text in this control
     fn set_text(&self, text: &str) -> PyResult<()> {
-        create_automation()?
+        create_automation()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
             .set_text(&self.inner.id, text)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
@@ -124,14 +126,16 @@ impl Control {
     #[pyo3(signature = (direction, amount=1))]
     fn scroll(&self, direction: &str, amount: i32) -> PyResult<()> {
         let dir = parse_scroll_direction(direction)?;
-        create_automation()?
+        create_automation()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
             .scroll(&self.inner.id, dir, amount)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Set focus to this control
     fn set_focus(&self) -> PyResult<()> {
-        create_automation()?
+        create_automation()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
             .focus_control(&self.inner.id)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
@@ -206,35 +210,40 @@ impl Window {
 
     /// Activate (bring to front) this window
     fn activate(&self) -> PyResult<()> {
-        create_automation()?
+        create_automation()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
             .activate_window(&self.inner.id)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Close this window
     fn close(&self) -> PyResult<()> {
-        create_automation()?
+        create_automation()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
             .close_window(&self.inner.id)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Minimize this window
     fn minimize(&self) -> PyResult<()> {
-        create_automation()?
+        create_automation()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
             .minimize_window(&self.inner.id)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Maximize this window
     fn maximize(&self) -> PyResult<()> {
-        create_automation()?
+        create_automation()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
             .maximize_window(&self.inner.id)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Restore this window
     fn restore(&self) -> PyResult<()> {
-        create_automation()?
+        create_automation()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
             .restore_window(&self.inner.id)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
@@ -251,7 +260,7 @@ impl Window {
         timeout_ms: u64,
     ) -> PyResult<Vec<Control>> {
         let ct = control_type.map(|s| ControlType::from_name(s));
-        let automation = create_automation()?;
+        let automation = create_automation().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
 
         if timeout_ms > 0 {
             automation
@@ -278,7 +287,7 @@ impl Window {
         timeout_ms: u64,
     ) -> PyResult<Control> {
         let ct = control_type.map(|s| ControlType::from_name(s));
-        let automation = create_automation()?;
+        let automation = create_automation().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
 
         if timeout_ms > 0 {
             automation
@@ -327,7 +336,8 @@ pub struct PyUIAutoManager;
 impl PyUIAutoManager {
     /// List all top-level windows
     fn list_windows(&self) -> PyResult<Vec<Window>> {
-        create_automation()?
+        create_automation()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
             .list_windows()
             .map(|windows| windows.into_iter().map(Window::from).collect())
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
@@ -335,7 +345,8 @@ impl PyUIAutoManager {
 
     /// Find a window by title (partial match)
     fn find_window(&self, title: &str) -> PyResult<Window> {
-        create_automation()?
+        create_automation()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
             .find_window(title)
             .map(Window::from)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
@@ -343,7 +354,8 @@ impl PyUIAutoManager {
 
     /// Find a window by process ID
     fn find_window_by_pid(&self, pid: u32) -> PyResult<Window> {
-        create_automation()?
+        create_automation()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
             .find_window_by_pid(pid)
             .map(Window::from)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
@@ -352,7 +364,8 @@ impl PyUIAutoManager {
     /// Wait for a window to appear
     #[pyo3(signature = (title, timeout_ms=5000))]
     fn wait_for_window(&self, title: &str, timeout_ms: u64) -> PyResult<Window> {
-        create_automation()?
+        create_automation()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
             .wait_for_window(title, timeout_ms)
             .map(Window::from)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
@@ -360,7 +373,8 @@ impl PyUIAutoManager {
 
     /// Type text (keyboard input)
     fn type_text(&self, text: &str) -> PyResult<()> {
-        create_automation()?
+        create_automation()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
             .type_text(text)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
@@ -377,7 +391,8 @@ impl PyUIAutoManager {
             shift,
             win,
         };
-        create_automation()?
+        create_automation()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
             .press_key(key, modifiers)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }

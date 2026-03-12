@@ -29,5 +29,10 @@ features = ["reqwest", "streaming", "toml", "tencent"]
 [target.'cfg(windows)'.dependencies]
 uiautomation = { version = "0.24.4", features = ["input", "control", "pattern"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+atspi = { version = "0.29.0", features = ["connection", "proxies", "tokio"] }
+enigo = "0.6"
+zbus = "5"
+
 [dev-dependencies]
 tempfile = "3.26.0"

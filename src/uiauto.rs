@@ -5,8 +5,8 @@
 //!
 //! # Platform Support
 //! - Windows: Full support via UI Automation
+//! - Linux: Full support via AT-SPI2
 //! - macOS: Not yet implemented
-//! - Linux: Not yet implemented
 //!
 //! # Usage
 //! ```python
@@ -29,13 +29,14 @@
 //! uiauto.press_key("enter", ctrl=True)
 //! ```
 
-#[cfg(windows)]
-mod windows;
-
-#[cfg(windows)]
 mod manager;
 
 #[cfg(windows)]
+mod windows;
+
+#[cfg(target_os = "linux")]
+mod linux;
+
 pub use manager::create_uiauto_module;
 
 use std::{
@@ -272,10 +273,110 @@ pub enum ScrollDirection {
     Right,
 }
 
-#[cfg(not(windows))]
-pub fn create_uiauto_module() -> Result<(), UIError> {
-    Err(UIError {
-        message: "UI automation is only supported on Windows".to_string(),
-        error_type: UIErrorType::PlatformNotSupported,
-    })
+/// Platform-independent UI Automation trait
+pub trait UIAutomation {
+    /// List all top-level windows
+    fn list_windows(&self) -> Result<Vec<WindowInfo>, UIError>;
+
+    /// Find a window by title (partial match)
+    fn find_window(&self, title: &str) -> Result<WindowInfo, UIError>;
+
+    /// Find a window by process ID
+    fn find_window_by_pid(&self, pid: u32) -> Result<WindowInfo, UIError>;
+
+    /// Wait for a window to appear
+    fn wait_for_window(&self, title: &str, timeout_ms: u64) -> Result<WindowInfo, UIError>;
+
+    /// Activate (bring to front) a window
+    fn activate_window(&self, window_id: &str) -> Result<(), UIError>;
+
+    /// Close a window
+    fn close_window(&self, window_id: &str) -> Result<(), UIError>;
+
+    /// Minimize a window
+    fn minimize_window(&self, window_id: &str) -> Result<(), UIError>;
+
+    /// Maximize a window
+    fn maximize_window(&self, window_id: &str) -> Result<(), UIError>;
+
+    /// Restore a window
+    fn restore_window(&self, window_id: &str) -> Result<(), UIError>;
+
+    /// Find controls in a window
+    fn find_controls(
+        &self,
+        window_id: &str,
+        name: Option<&str>,
+        control_type: Option<ControlType>,
+    ) -> Result<Vec<ControlInfo>, UIError>;
+
+    /// Find a single control
+    fn find_control(
+        &self,
+        window_id: &str,
+        name: Option<&str>,
+        control_type: Option<ControlType>,
+    ) -> Result<ControlInfo, UIError>;
+
+    /// Wait for a control to appear
+    fn wait_for_control(
+        &self,
+        window_id: &str,
+        name: Option<&str>,
+        control_type: Option<ControlType>,
+        timeout_ms: u64,
+    ) -> Result<ControlInfo, UIError>;
+
+    /// Wait for controls to appear (at least one)
+    fn wait_for_controls(
+        &self,
+        window_id: &str,
+        name: Option<&str>,
+        control_type: Option<ControlType>,
+        timeout_ms: u64,
+    ) -> Result<Vec<ControlInfo>, UIError>;
+
+    /// Click on a control
+    fn click(&self, control_id: &str) -> Result<(), UIError>;
+
+    /// Double click on a control
+    fn double_click(&self, control_id: &str) -> Result<(), UIError>;
+
+    /// Right click on a control
+    fn right_click(&self, control_id: &str) -> Result<(), UIError>;
+
+    /// Get text from a control
+    fn get_text(&self, control_id: &str) -> Result<String, UIError>;
+
+    /// Set text in a control
+    fn set_text(&self, control_id: &str, text: &str) -> Result<(), UIError>;
+
+    /// Type text (keyboard input)
+    fn type_text(&self, text: &str) -> Result<(), UIError>;
+
+    /// Press a key with optional modifiers
+    fn press_key(&self, key: &str, modifiers: KeyModifiers) -> Result<(), UIError>;
+
+    /// Scroll in a control
+    fn scroll(
+        &self,
+        control_id: &str,
+        direction: ScrollDirection,
+        amount: i32,
+    ) -> Result<(), UIError>;
+
+    /// Set focus to a control
+    fn focus_control(&self, control_id: &str) -> Result<(), UIError>;
+}
+
+/// Create a platform-specific UI Automation instance
+#[cfg(windows)]
+pub fn create_automation() -> Result<Box<dyn UIAutomation>, UIError> {
+    Ok(Box::new(windows::WindowsUIAutomation::new()?))
+}
+
+/// Create a platform-specific UI Automation instance
+#[cfg(target_os = "linux")]
+pub fn create_automation() -> Result<Box<dyn UIAutomation>, UIError> {
+    Ok(Box::new(linux::LinuxUIAutomation::new()?))
 }
