@@ -1,5 +1,52 @@
 # 更新日志
 
+## [2026-03-12] 版本控制系统 (VCS)
+
+### ✨ 新特性
+
+#### 全新版本控制系统
+nb-claw 现在具备强大的文件版本追踪能力，基于 git2 库实现：
+
+- **智能路径检测**：自动从 Python 代码和 CMD 命令中提取文件路径
+  - 支持变量赋值：`file_path = r'D:\data.txt'`
+  - 支持 `os.path.join()` 函数调用
+  - 支持 pathlib `/` 操作符拼接
+  - 支持字符串 `+` 连接
+- **自动快照**：执行 Python/CMD 前自动追踪文件，执行后自动创建快照
+- **上下文感知提交**：提取代码中路径出现的上下文作为提交消息（前后各5行）
+- **文件恢复**：支持恢复任意历史版本的文件，即使文件已被删除
+- **无状态设计**：路径使用 base64 编码存储在 git tree 中，无需外部索引文件
+
+#### Python API
+模型可通过内置 `vcs` 模块操作版本控制：
+
+```python
+import vcs
+
+# 创建快照
+vcs.snapshot("保存配置更改", ["config.json", "data.db"])
+
+# 列出快照
+for snap in vcs.list():
+    print(f"[{snap.short_id}] {snap.message}")
+
+# 恢复已删除的文件
+vcs.restore("D:\\work\\document.txt")
+```
+
+### 🐛 Bug 修复
+
+- **UTF-8 边界截断崩溃**：修复多字节字符截断时在字符中间切割导致的 panic
+
+### 📁 文件变更
+
+- **新增** `src/vcs.rs` - VCS 模块入口
+- **新增** `src/vcs/engine.rs` - Git 版本控制引擎
+- **新增** `src/vcs/path_extractor.rs` - 智能路径提取器
+- **新增** `src/vcs/py_module.rs` - Python API 绑定
+- **修改** `src/config.rs` - 添加 VCS 配置项
+- **修改** `src/llm/tools.rs` - 集成自动文件追踪
+
 ## [2026-03-12] UI 自动化模块平台无关重构
 
 ### 🔄 重构

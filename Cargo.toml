@@ -5,14 +5,17 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.102"
+base64 = { version = "0.22.1", default-features = false, features = ["std"] }
 async-stream = "0.3.6"
 chrono = { version = "0.4.44", features = ["serde"] }
 encoding_rs = "0.8.35"
 clap = { version = "4.5.60", features = ["derive"] }
 fastembed = "5.12.0"
 futures-util = "0.3.32"
+git2 = "0.20"
 pyo3 = { version = "0.28.2", features = ["auto-initialize", "experimental-async"] }
 postcard = { version = "1.1.1", features = ["alloc"] }
+regex = "1"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 tokio = { version = "1.50.0", features = ["full"] }

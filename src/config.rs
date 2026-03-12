@@ -144,6 +144,9 @@ pub struct Config {
     pub memory: MemoryConfig,
     /// Assistant system prompt
     pub system: SystemConfig,
+    /// Version control system configuration
+    #[serde(default)]
+    pub vcs: VcsConfig,
 }
 
 /// LLM provider configuration
@@ -226,6 +229,7 @@ impl Default for PythonConfig {
                 "urllib".into(),
                 "memory".into(),
                 "uiauto".into(), // UI Automation module
+                "vcs".into(),    // Version control module
             ],
         }
     }
@@ -338,6 +342,38 @@ pub struct SystemConfig {
     pub thinking_mode: bool,
 }
 
+/// Version control (git2) configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VcsConfig {
+    /// Enable version control tracking
+    #[serde(default = "default_vcs_enabled")]
+    pub enabled: bool,
+    /// Path to store git repository database
+    #[serde(default = "default_vcs_db_path")]
+    pub db_path: String,
+    /// Maximum number of snapshots to keep (0 = unlimited)
+    #[serde(default = "default_vcs_max_snapshots")]
+    pub max_snapshots: usize,
+    /// Auto-track files before model requests
+    #[serde(default = "default_vcs_auto_track")]
+    pub auto_track: bool,
+    /// Maximum file size to track (in bytes, 0 = unlimited)
+    #[serde(default = "default_vcs_max_file_size")]
+    pub max_file_size: usize,
+}
+
+impl Default for VcsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            db_path: "./data/vcs".to_string(),
+            max_snapshots: 100,
+            auto_track: true,
+            max_file_size: 10 * 1024 * 1024, // 10MB
+        }
+    }
+}
+
 impl Default for SystemConfig {
     fn default() -> Self {
         Self {
@@ -370,6 +406,7 @@ impl Default for Config {
             python: PythonConfig::default(),
             memory: MemoryConfig::default(),
             system: SystemConfig::default(),
+            vcs: VcsConfig::default(),
         }
     }
 }
@@ -652,6 +689,21 @@ fn default_max_context() -> usize {
 }
 fn default_thinking_mode() -> bool {
     false
+}
+fn default_vcs_enabled() -> bool {
+    true
+}
+fn default_vcs_db_path() -> String {
+    "./data/vcs".to_string()
+}
+fn default_vcs_max_snapshots() -> usize {
+    100
+}
+fn default_vcs_auto_track() -> bool {
+    true
+}
+fn default_vcs_max_file_size() -> usize {
+    10 * 1024 * 1024 // 10MB
 }
 
 #[cfg(test)]

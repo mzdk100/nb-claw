@@ -6,22 +6,25 @@ use {
     super::{UIAutomation as UIAutomationTrait, *},
     atspi::{AccessibilityConnection, Role, State, connection::set_session_accessibility},
     enigo::{Enigo, Key, Keyboard, Mouse, MouseButton as EnigoMouseButton, MouseControllable},
-    std::time::Duration,
+    std::{cell::RefCell, thread::sleep, time::Duration},
+    tokio::runtime::Runtime,
     tracing::{debug, warn},
     zbus::Connection,
 };
 
+//noinspection SpellCheckingInspection
 /// Linux UI Automation backend using AT-SPI2
 pub struct LinuxUIAutomation {
     connection: AccessibilityConnection,
-    enigo: Enigo,
+    enigo: RefCell<Enigo>,
 }
 
+//noinspection SpellCheckingInspection
 impl LinuxUIAutomation {
     /// Create a new Linux UI Automation instance
     pub fn new() -> Result<Self, UIError> {
         // Enable accessibility in the session
-        let rt = tokio::runtime::Runtime::new().map_err(|e| UIError {
+        let rt = Runtime::new().map_err(|e| UIError {
             message: format!("Failed to create tokio runtime: {}", e),
             error_type: UIErrorType::OperationFailed,
         })?;
@@ -47,12 +50,17 @@ impl LinuxUIAutomation {
                 error_type: UIErrorType::OperationFailed,
             })?;
 
-            Ok(Self { connection, enigo })
+            Ok(Self {
+                connection,
+                enigo: RefCell::new(enigo),
+            })
         })
     }
 
     /// Get the registry (root) accessible
-    pub fn get_registry(&self) -> Result<atspi::proxy::accessible::AccessibleProxy<'static>, UIError> {
+    pub fn get_registry(
+        &self,
+    ) -> Result<atspi::proxy::accessible::AccessibleProxy<'static>, UIError> {
         let rt = tokio::runtime::Runtime::new().map_err(|e| UIError {
             message: format!("Failed to create runtime: {}", e),
             error_type: UIErrorType::OperationFailed,
@@ -305,13 +313,15 @@ impl LinuxUIAutomation {
 
             // Fall back to mouse click at component position
             if let Ok(component) = self.get_component_proxy(&proxy).await {
-                if let Ok((x, y, width, height)) = component.get_extents(atspi::CoordType::Screen).await
+                if let Ok((x, y, width, height)) =
+                    component.get_extents(atspi::CoordType::Screen).await
                 {
                     let center_x = x + width / 2;
                     let center_y = y + height / 2;
 
-                    self.enigo.mouse_move_to(center_x, center_y);
-                    self.enigo.mouse_click(EnigoMouseButton::Left);
+                    let mut enigo = self.enigo.borrow_mut();
+                    enigo.mouse_move_to(center_x, center_y);
+                    enigo.mouse_click(EnigoMouseButton::Left);
 
                     return Ok(());
                 }
@@ -335,15 +345,17 @@ impl LinuxUIAutomation {
             let proxy = self.get_accessible_proxy(control_id).await?;
 
             if let Ok(component) = self.get_component_proxy(&proxy).await {
-                if let Ok((x, y, width, height)) = component.get_extents(atspi::CoordType::Screen).await
+                if let Ok((x, y, width, height)) =
+                    component.get_extents(atspi::CoordType::Screen).await
                 {
                     let center_x = x + width / 2;
                     let center_y = y + height / 2;
 
-                    self.enigo.mouse_move_to(center_x, center_y);
-                    self.enigo.mouse_click(EnigoMouseButton::Left);
+                    let mut enigo = self.enigo.borrow_mut();
+                    enigo.mouse_move_to(center_x, center_y);
+                    enigo.mouse_click(EnigoMouseButton::Left);
                     std::thread::sleep(Duration::from_millis(50));
-                    self.enigo.mouse_click(EnigoMouseButton::Left);
+                    enigo.mouse_click(EnigoMouseButton::Left);
 
                     return Ok(());
                 }
@@ -367,13 +379,15 @@ impl LinuxUIAutomation {
             let proxy = self.get_accessible_proxy(control_id).await?;
 
             if let Ok(component) = self.get_component_proxy(&proxy).await {
-                if let Ok((x, y, width, height)) = component.get_extents(atspi::CoordType::Screen).await
+                if let Ok((x, y, width, height)) =
+                    component.get_extents(atspi::CoordType::Screen).await
                 {
                     let center_x = x + width / 2;
                     let center_y = y + height / 2;
 
-                    self.enigo.mouse_move_to(center_x, center_y);
-                    self.enigo.mouse_click(EnigoMouseButton::Right);
+                    let mut enigo = self.enigo.borrow_mut();
+                    enigo.mouse_move_to(center_x, center_y);
+                    enigo.mouse_click(EnigoMouseButton::Right);
 
                     return Ok(());
                 }
@@ -457,13 +471,16 @@ impl LinuxUIAutomation {
             // Select all and type
             std::thread::sleep(Duration::from_millis(50));
 
-            self.enigo.key(Key::Control, enigo::Direction::Press);
-            self.enigo.key(Key::Unicode('a'), enigo::Direction::Click);
-            self.enigo.key(Key::Control, enigo::Direction::Release);
+            {
+                let mut enigo = self.enigo.borrow_mut();
+                enigo.key(Key::Control, enigo::Direction::Press);
+                enigo.key(Key::Unicode('a'), enigo::Direction::Click);
+                enigo.key(Key::Control, enigo::Direction::Release);
 
-            std::thread::sleep(Duration::from_millis(50));
+                std::thread::sleep(Duration::from_millis(50));
 
-            self.enigo.text(text);
+                enigo.text(text);
+            }
 
             Ok(())
         })
@@ -471,7 +488,7 @@ impl LinuxUIAutomation {
 
     /// Type text (keyboard input)
     fn type_text_impl(&self, text: &str) -> Result<(), UIError> {
-        self.enigo.text(text);
+        self.enigo.borrow_mut().text(text);
         Ok(())
     }
 
@@ -479,32 +496,34 @@ impl LinuxUIAutomation {
     fn press_key_impl(&self, key: &str, modifiers: KeyModifiers) -> Result<(), UIError> {
         let enigo_key = self.parse_key(key)?;
 
+        let mut enigo = self.enigo.borrow_mut();
+
         if modifiers.ctrl {
-            self.enigo.key(Key::Control, enigo::Direction::Press);
+            enigo.key(Key::Control, enigo::Direction::Press);
         }
         if modifiers.alt {
-            self.enigo.key(Key::Alt, enigo::Direction::Press);
+            enigo.key(Key::Alt, enigo::Direction::Press);
         }
         if modifiers.shift {
-            self.enigo.key(Key::Shift, enigo::Direction::Press);
+            enigo.key(Key::Shift, enigo::Direction::Press);
         }
         if modifiers.win {
-            self.enigo.key(Key::Meta, enigo::Direction::Press);
+            enigo.key(Key::Meta, enigo::Direction::Press);
         }
 
-        self.enigo.key(enigo_key, enigo::Direction::Click);
+        enigo.key(enigo_key, enigo::Direction::Click);
 
         if modifiers.win {
-            self.enigo.key(Key::Meta, enigo::Direction::Release);
+            enigo.key(Key::Meta, enigo::Direction::Release);
         }
         if modifiers.shift {
-            self.enigo.key(Key::Shift, enigo::Direction::Release);
+            enigo.key(Key::Shift, enigo::Direction::Release);
         }
         if modifiers.alt {
-            self.enigo.key(Key::Alt, enigo::Direction::Release);
+            enigo.key(Key::Alt, enigo::Direction::Release);
         }
         if modifiers.ctrl {
-            self.enigo.key(Key::Control, enigo::Direction::Release);
+            enigo.key(Key::Control, enigo::Direction::Release);
         }
 
         Ok(())
@@ -530,24 +549,27 @@ impl LinuxUIAutomation {
                 let _ = component.grab_focus().await;
             }
 
-            std::thread::sleep(Duration::from_millis(50));
+            sleep(Duration::from_millis(50));
 
-            match direction {
-                ScrollDirection::Up => {
-                    self.enigo.key(Key::PageUp, enigo::Direction::Click);
-                }
-                ScrollDirection::Down => {
-                    self.enigo.key(Key::PageDown, enigo::Direction::Click);
-                }
-                ScrollDirection::Left => {
-                    self.enigo.key(Key::Control, enigo::Direction::Press);
-                    self.enigo.key(Key::PageUp, enigo::Direction::Click);
-                    self.enigo.key(Key::Control, enigo::Direction::Release);
-                }
-                ScrollDirection::Right => {
-                    self.enigo.key(Key::Control, enigo::Direction::Press);
-                    self.enigo.key(Key::PageDown, enigo::Direction::Click);
-                    self.enigo.key(Key::Control, enigo::Direction::Release);
+            {
+                let mut enigo = self.enigo.borrow_mut();
+                match direction {
+                    ScrollDirection::Up => {
+                        enigo.key(Key::PageUp, enigo::Direction::Click);
+                    }
+                    ScrollDirection::Down => {
+                        enigo.key(Key::PageDown, enigo::Direction::Click);
+                    }
+                    ScrollDirection::Left => {
+                        enigo.key(Key::Control, enigo::Direction::Press);
+                        enigo.key(Key::PageUp, enigo::Direction::Click);
+                        enigo.key(Key::Control, enigo::Direction::Release);
+                    }
+                    ScrollDirection::Right => {
+                        enigo.key(Key::Control, enigo::Direction::Press);
+                        enigo.key(Key::PageDown, enigo::Direction::Click);
+                        enigo.key(Key::Control, enigo::Direction::Release);
+                    }
                 }
             }
 
@@ -577,6 +599,7 @@ impl LinuxUIAutomation {
     }
 }
 
+//noinspection SpellCheckingInspection
 impl LinuxUIAutomation {
     // --- Helper methods ---
 
@@ -706,8 +729,13 @@ impl LinuxUIAutomation {
         let children = proxy.get_children().await.unwrap_or_default();
         for child_ref in children {
             if let Ok(child_proxy) = self.get_accessible_proxy_from_ref(&child_ref).await {
-                Box::pin(self.collect_controls_recursive(&child_proxy, name_filter, type_filter, result))
-                    .await?;
+                Box::pin(self.collect_controls_recursive(
+                    &child_proxy,
+                    name_filter,
+                    type_filter,
+                    result,
+                ))
+                .await?;
             }
         }
 
@@ -742,7 +770,7 @@ impl LinuxUIAutomation {
         proxy: &atspi::proxy::accessible::AccessibleProxy<'_>,
     ) -> Result<WindowInfo, UIError> {
         let name = proxy.name().await.unwrap_or_default();
-        let role = proxy.get_role().await.unwrap_or(Role::Invalid);
+        let _role = proxy.get_role().await.unwrap_or(Role::Invalid);
 
         // Get process info from application
         let app = proxy.get_application().await.ok();
@@ -802,7 +830,7 @@ impl LinuxUIAutomation {
         proxy: &atspi::proxy::accessible::AccessibleProxy<'_>,
     ) -> Result<ControlInfo, UIError> {
         let name = proxy.name().await.unwrap_or_default();
-        let role = proxy.get_role().await.unwrap_or(Role::Invalid);
+        let _role = proxy.get_role().await.unwrap_or(Role::Invalid);
         let control_type = self.role_to_control_type(role);
 
         let automation_id = proxy.accessible_id().await.ok();
@@ -1026,7 +1054,12 @@ impl UIAutomationTrait for LinuxUIAutomation {
         self.press_key_impl(key, modifiers)
     }
 
-    fn scroll(&self, control_id: &str, direction: ScrollDirection, amount: i32) -> Result<(), UIError> {
+    fn scroll(
+        &self,
+        control_id: &str,
+        direction: ScrollDirection,
+        amount: i32,
+    ) -> Result<(), UIError> {
         self.scroll_impl(control_id, direction, amount)
     }
 

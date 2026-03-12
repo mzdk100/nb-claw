@@ -8,6 +8,7 @@ mod llm;
 mod memory;
 mod python;
 mod uiauto;
+mod vcs;
 
 use {
     clap::Parser,
@@ -25,6 +26,7 @@ use {
     tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter, stdin, stdout},
     tracing::{error, info},
     tracing_subscriber::{EnvFilter, fmt},
+    vcs::VcsEngine,
 };
 
 /// nb-claw: An autonomous AI assistant
@@ -88,8 +90,25 @@ async fn main() -> anyhow::Result<()> {
     let memory = Arc::new(RwLock::new(Memory::new(config.memory.clone())?));
     info!("Memory engine initialized");
 
-    // Create LLM manager with memory engine
-    let mut llm_manager = LlmManager::new(&config)?;
+    // Initialize VCS engine if enabled
+    let vcs = if config.vcs.enabled {
+        match VcsEngine::new(config.vcs.clone()) {
+            Ok(engine) => {
+                info!("VCS engine initialized");
+                Some(Arc::new(engine))
+            }
+            Err(e) => {
+                error!("Failed to initialize VCS engine: {}", e);
+                None
+            }
+        }
+    } else {
+        info!("VCS engine disabled");
+        None
+    };
+
+    // Create LLM manager with memory and VCS support
+    let mut llm_manager = LlmManager::new(&config, vcs.clone())?;
     llm_manager.set_memory(memory.clone());
     info!("LLM client initialized: {}", llm_manager.provider_name());
 
@@ -97,9 +116,20 @@ async fn main() -> anyhow::Result<()> {
     let memory_module = memory::create_memory_module(Arc::downgrade(&memory))?;
     // Create and register UI automation module
     let uiauto_module = uiauto::create_uiauto_module()?;
-    // Register memory module
+    // Create and register VCS module for Python
+    let vcs_module = if let Some(ref vcs) = vcs {
+        Some(vcs::create_vcs_module(Arc::downgrade(vcs))?)
+    } else {
+        None
+    };
+
+    // Register modules
     PythonInterpreter::register_module_global(memory_module);
     PythonInterpreter::register_module_global(uiauto_module);
+    if let Some(vcs_mod) = vcs_module {
+        PythonInterpreter::register_module_global(vcs_mod);
+        info!("VCS module registered");
+    }
 
     // Test mode
     if args.test {

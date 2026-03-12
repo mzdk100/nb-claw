@@ -6,12 +6,19 @@
 //! - `run_cmd`: Execute shell commands
 
 use {
-    crate::PythonInterpreter,
+    crate::{
+        python::PythonInterpreter,
+        vcs::{VcsEngine, extract_paths},
+    },
     encoding_rs::GBK,
     serde::{Deserialize, Serialize},
     serde_json::{Value, json},
+    std::{
+        path::{Path, PathBuf},
+        sync::Arc,
+    },
     tokio::process::Command,
-    tracing::info,
+    tracing::{debug, info},
 };
 
 /// Maximum length for stdout/stderr output (keep tail)
@@ -72,12 +79,126 @@ impl ToolDefinition {
 /// Tool registry
 pub struct ToolRegistry {
     interpreter: PythonInterpreter,
+    vcs: Option<Arc<VcsEngine>>,
 }
 
 impl ToolRegistry {
     /// Create a new tool registry
     pub fn new(interpreter: PythonInterpreter) -> Self {
-        Self { interpreter }
+        Self {
+            interpreter,
+            vcs: None,
+        }
+    }
+
+    /// Set VCS engine for automatic file tracking
+    pub fn set_vcs(&mut self, vcs: Arc<VcsEngine>) {
+        self.vcs = Some(vcs);
+    }
+
+    /// Auto-track files from code/command
+    fn auto_track_files(&self, content: &str, is_python: bool) {
+        if let Some(vcs) = &self.vcs {
+            // Check if auto_track is enabled
+            if !vcs.config().auto_track {
+                return;
+            }
+
+            let paths = extract_paths(content, is_python);
+            if !paths.is_empty() {
+                info!(
+                    "Detected {} file paths in {}",
+                    paths.len(),
+                    if is_python { "Python" } else { "CMD" }
+                );
+
+                // Collect existing files
+                let existing_paths: Vec<&Path> = paths
+                    .iter()
+                    .filter(|p| PathBuf::from(p).exists())
+                    .map(|p| Path::new(p))
+                    .collect();
+
+                if existing_paths.is_empty() {
+                    debug!("No existing files to snapshot");
+                    return;
+                }
+
+                // Generate meaningful commit message
+                let msg = Self::generate_commit_message(content, &paths, is_python);
+
+                match vcs.create_snapshot(&msg, &existing_paths) {
+                    Ok(id) if !id.is_empty() => {
+                        info!("Created snapshot [{}]: {}", &id[..7.min(id.len())], msg);
+                    }
+                    Ok(_) => {
+                        debug!("No changes detected, skipped snapshot");
+                    }
+                    Err(e) => debug!("Snapshot error: {}", e),
+                }
+            }
+        }
+    }
+
+    /// Generate a commit message from code/command content by extracting context around paths
+    fn generate_commit_message(content: &str, paths: &[String], _is_python: bool) -> String {
+        let lines: Vec<&str> = content.lines().collect();
+        let total_lines = lines.len();
+
+        // Find the first line that contains any of the paths
+        let mut target_line = None;
+        for (line_idx, line) in lines.iter().enumerate() {
+            for path in paths {
+                // Check if the line contains the path (handle both forward and backslash)
+                let path_normalized = path.replace('\\', "/");
+                let line_normalized = line.replace('\\', "/");
+                if line_normalized.contains(&path_normalized)
+                    || line.contains(path)
+                    || line.contains(&path.replace('/', "\\"))
+                {
+                    target_line = Some(line_idx);
+                    break;
+                }
+            }
+            if target_line.is_some() {
+                break;
+            }
+        }
+
+        // If no path found in content, use the first meaningful line
+        let target_line = target_line.unwrap_or_else(|| {
+            // Find first non-empty, non-comment line
+            lines
+                .iter()
+                .position(|l| {
+                    let trimmed = l.trim();
+                    !trimmed.is_empty() && !trimmed.starts_with('#')
+                })
+                .unwrap_or(0)
+        });
+
+        // Extract context: 5 lines before and after (or as many as available)
+        let context_before = 5;
+        let context_after = 5;
+
+        let start_line = target_line.saturating_sub(context_before);
+        let end_line = (target_line + context_after + 1).min(total_lines);
+
+        // Build the message from context lines
+        let context_lines: Vec<&str> = lines[start_line..end_line].to_vec();
+        let msg = context_lines.join(" \\n ");
+
+        // Truncate if too long (git commit message convention: ~72 chars for title)
+        // Use chars() to handle UTF-8 boundaries properly
+        let msg = if msg.chars().count() > 100 {
+            format!("{}...", msg.chars().take(97).collect::<String>())
+        } else if msg.trim().is_empty() {
+            "Auto-snapshot".to_string()
+        } else {
+            msg
+        };
+
+        msg
     }
 
     /// Get all available tools
@@ -193,7 +314,10 @@ dir /A"#.to_string(),
             }
         };
 
-        tracing::debug!("Executing Python code: {}", code);
+        // Auto-track files before execution
+        self.auto_track_files(&code, true);
+
+        debug!("Executing Python code: {}", code);
 
         match self.interpreter.execute(&code).await {
             Ok(result) => {
@@ -262,7 +386,10 @@ dir /A"#.to_string(),
             }
         };
 
-        tracing::debug!("Executing shell command: {}", command);
+        // Auto-track files before execution
+        self.auto_track_files(&command, false);
+
+        debug!("Executing shell command: {}", command);
 
         let output = if cfg!(target_os = "windows") {
             // On Windows, use cmd /c

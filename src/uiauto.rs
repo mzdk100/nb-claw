@@ -29,7 +29,7 @@
 //! uiauto.press_key("enter", ctrl=True)
 //! ```
 
-mod manager;
+mod py_module;
 
 #[cfg(windows)]
 mod windows;
@@ -37,7 +37,7 @@ mod windows;
 #[cfg(target_os = "linux")]
 mod linux;
 
-pub use manager::create_uiauto_module;
+pub use py_module::create_uiauto_module;
 
 use std::{
     error::Error,
@@ -157,6 +157,7 @@ impl ControlType {
         }
     }
 
+    //noinspection SpellCheckingInspection
     /// Convert to string name
     pub fn to_name(&self) -> &'static str {
         match self {

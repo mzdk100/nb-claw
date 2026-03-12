@@ -17,6 +17,7 @@ Thumbs.db
 # Project specific
 /config/
 /data/
+/nb-claw/
 *.log
 .env
 .env.local

@@ -6,6 +6,7 @@ use {
         llm::tools::{ToolCallResult, ToolRegistry},
         memory::Memory,
         python::PythonInterpreter,
+        vcs::VcsEngine,
     },
     anyhow::{Context, Error, Result},
     async_stream::try_stream,
@@ -45,7 +46,7 @@ pub struct LlmManager {
 
 impl LlmManager {
     /// Create a new LLM manager from configuration
-    pub fn new(config: &Config) -> Result<Self> {
+    pub fn new(config: &Config, vcs: Option<Arc<VcsEngine>>) -> Result<Self> {
         // Build client using builder pattern - llm-connector provides professional defaults
         let client_builder = LlmClient::builder();
 
@@ -158,7 +159,10 @@ impl LlmManager {
         );
 
         let interpreter = PythonInterpreter::new(config.python.clone())?;
-        let tool_registry = ToolRegistry::new(interpreter);
+        let mut tool_registry = ToolRegistry::new(interpreter);
+        if let Some(vcs) = vcs {
+            tool_registry.set_vcs(vcs.clone());
+        }
 
         Ok(Self {
             client,
@@ -232,6 +236,14 @@ Importing builtin module `uiauto`, and use `help(uiauto)` to check the help.
 ```
 "#;
 
+        // Add VCS instructions if enabled
+        const VCS_INSTRUCTIONS: &str = r#"
+## Version Control System
+
+Importing builtin module `vcs`, you can track file versions, create snapshots, and restore files. This is useful when the user needs you to restore a previously modified file. Use `help(vcs)` to check the help.
+```
+"#;
+
         // Combine all parts
         let mut full_prompt = base_prompt.to_owned();
 
@@ -241,6 +253,11 @@ Importing builtin module `uiauto`, and use `help(uiauto)` to check the help.
         }
 
         full_prompt.push_str(PYTHON_INSTRUCTIONS);
+
+        // Add VCS instructions if enabled
+        if self.config.vcs.enabled {
+            full_prompt.push_str(VCS_INSTRUCTIONS);
+        }
 
         Ok(full_prompt)
     }
@@ -546,10 +563,11 @@ memory.remember("important insight", importance=0.6)
                     }
                 }
             }
-            info!(
-                "Memory consolidation response: {}",
-                choice.message.content_as_text()
-            );
+
+            let content = choice.message.content_as_text();
+            if !content.is_empty() {
+                info!("Memory consolidation response: {}", content);
+            }
         }
 
         // Save memories to disk
