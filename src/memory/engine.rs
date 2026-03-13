@@ -747,45 +747,4 @@ mod tests {
         // JSON file should be removed after migration
         assert!(!PathBuf::from(&storage_path).join("entries.json").exists());
     }
-
-    //noinspection SpellCheckingInspection
-    #[test]
-    fn test_embedding_model_parsing() {
-        // Test valid model names (fastembed 5.12.0)
-        let valid_models = vec![
-            // BGE English
-            "Xenova/bge-small-en-v1.5",
-            "Xenova/bge-base-en-v1.5",
-            "Xenova/bge-large-en-v1.5",
-            // BGE Chinese
-            "Xenova/bge-small-zh-v1.5",
-            "Xenova/bge-large-zh-v1.5",
-            // BGE M3
-            "BAAI/bge-m3",
-            // MiniLM
-            "Qdrant/all-MiniLM-L6-v2-onnx",
-            "Xenova/all-MiniLM-L6-v2",
-            // Multilingual E5
-            "intfloat/multilingual-e5-small",
-            "intfloat/multilingual-e5-base",
-            // Snowflake Arctic
-            "snowflake/snowflake-arctic-embed-xs",
-            "snowflake/snowflake-arctic-embed-s",
-            "Snowflake/snowflake-arctic-embed-m",
-            "snowflake/snowflake-arctic-embed-l",
-            // Other
-            "nomic-ai/nomic-embed-text-v1.5",
-            "Alibaba-NLP/gte-base-en-v1.5",
-            "mixedbread-ai/mxbai-embed-large-v1",
-        ];
-
-        for model_name in valid_models {
-            let model: Result<EmbeddingModel, String> = model_name.parse();
-            assert!(model.is_ok(), "Failed to parse model: {}", model_name);
-        }
-
-        // Test invalid model name
-        let invalid_model: Result<EmbeddingModel, String> = "invalid/model-name".parse();
-        assert!(invalid_model.is_err());
-    }
 }

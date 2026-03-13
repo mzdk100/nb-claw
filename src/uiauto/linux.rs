@@ -5,11 +5,10 @@
 use {
     super::{UIAutomation as UIAutomationTrait, *},
     atspi::{AccessibilityConnection, Role, State, connection::set_session_accessibility},
-    enigo::{Enigo, Key, Keyboard, Mouse, MouseButton as EnigoMouseButton, MouseControllable},
+    enigo::{Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse},
     std::{cell::RefCell, thread::sleep, time::Duration},
     tokio::runtime::Runtime,
     tracing::{debug, warn},
-    zbus::Connection,
 };
 
 //noinspection SpellCheckingInspection
@@ -31,12 +30,7 @@ impl LinuxUIAutomation {
 
         rt.block_on(async {
             // Try to enable accessibility
-            let session_conn = Connection::session().await.map_err(|e| UIError {
-                message: format!("Failed to connect to session bus: {}", e),
-                error_type: UIErrorType::OperationFailed,
-            })?;
-
-            let _ = set_session_accessibility(&session_conn, true).await;
+            let _ = set_session_accessibility(true).await;
             debug!("Accessibility enabled in session");
 
             // Connect to AT-SPI
@@ -320,8 +314,8 @@ impl LinuxUIAutomation {
                     let center_y = y + height / 2;
 
                     let mut enigo = self.enigo.borrow_mut();
-                    enigo.mouse_move_to(center_x, center_y);
-                    enigo.mouse_click(EnigoMouseButton::Left);
+                    enigo.move_mouse(center_x, center_y, Coordinate::Abs).ok();
+                    enigo.button(Button::Left, Direction::Click).ok();
 
                     return Ok(());
                 }
@@ -352,10 +346,10 @@ impl LinuxUIAutomation {
                     let center_y = y + height / 2;
 
                     let mut enigo = self.enigo.borrow_mut();
-                    enigo.mouse_move_to(center_x, center_y);
-                    enigo.mouse_click(EnigoMouseButton::Left);
+                    enigo.move_mouse(center_x, center_y, Coordinate::Abs).ok();
+                    enigo.button(Button::Left, Direction::Click).ok();
                     std::thread::sleep(Duration::from_millis(50));
-                    enigo.mouse_click(EnigoMouseButton::Left);
+                    enigo.button(Button::Left, Direction::Click).ok();
 
                     return Ok(());
                 }
@@ -386,8 +380,8 @@ impl LinuxUIAutomation {
                     let center_y = y + height / 2;
 
                     let mut enigo = self.enigo.borrow_mut();
-                    enigo.mouse_move_to(center_x, center_y);
-                    enigo.mouse_click(EnigoMouseButton::Right);
+                    enigo.move_mouse(center_x, center_y, Coordinate::Abs).ok();
+                    enigo.button(Button::Right, Direction::Click).ok();
 
                     return Ok(());
                 }
@@ -473,13 +467,13 @@ impl LinuxUIAutomation {
 
             {
                 let mut enigo = self.enigo.borrow_mut();
-                enigo.key(Key::Control, enigo::Direction::Press);
-                enigo.key(Key::Unicode('a'), enigo::Direction::Click);
-                enigo.key(Key::Control, enigo::Direction::Release);
+                enigo.key(Key::Control, Direction::Press).ok();
+                enigo.key(Key::Unicode('a'), Direction::Click).ok();
+                enigo.key(Key::Control, Direction::Release).ok();
 
                 std::thread::sleep(Duration::from_millis(50));
 
-                enigo.text(text);
+                enigo.text(text).ok();
             }
 
             Ok(())
@@ -488,7 +482,7 @@ impl LinuxUIAutomation {
 
     /// Type text (keyboard input)
     fn type_text_impl(&self, text: &str) -> Result<(), UIError> {
-        self.enigo.borrow_mut().text(text);
+        self.enigo.borrow_mut().text(text).ok();
         Ok(())
     }
 
@@ -499,31 +493,31 @@ impl LinuxUIAutomation {
         let mut enigo = self.enigo.borrow_mut();
 
         if modifiers.ctrl {
-            enigo.key(Key::Control, enigo::Direction::Press);
+            enigo.key(Key::Control, Direction::Press).ok();
         }
         if modifiers.alt {
-            enigo.key(Key::Alt, enigo::Direction::Press);
+            enigo.key(Key::Alt, Direction::Press).ok();
         }
         if modifiers.shift {
-            enigo.key(Key::Shift, enigo::Direction::Press);
+            enigo.key(Key::Shift, Direction::Press).ok();
         }
         if modifiers.win {
-            enigo.key(Key::Meta, enigo::Direction::Press);
+            enigo.key(Key::Meta, Direction::Press).ok();
         }
 
-        enigo.key(enigo_key, enigo::Direction::Click);
+        enigo.key(enigo_key, Direction::Click).ok();
 
         if modifiers.win {
-            enigo.key(Key::Meta, enigo::Direction::Release);
+            enigo.key(Key::Meta, Direction::Release).ok();
         }
         if modifiers.shift {
-            enigo.key(Key::Shift, enigo::Direction::Release);
+            enigo.key(Key::Shift, Direction::Release).ok();
         }
         if modifiers.alt {
-            enigo.key(Key::Alt, enigo::Direction::Release);
+            enigo.key(Key::Alt, Direction::Release).ok();
         }
         if modifiers.ctrl {
-            enigo.key(Key::Control, enigo::Direction::Release);
+            enigo.key(Key::Control, Direction::Release).ok();
         }
 
         Ok(())
@@ -555,20 +549,20 @@ impl LinuxUIAutomation {
                 let mut enigo = self.enigo.borrow_mut();
                 match direction {
                     ScrollDirection::Up => {
-                        enigo.key(Key::PageUp, enigo::Direction::Click);
+                        enigo.key(Key::PageUp, Direction::Click).ok();
                     }
                     ScrollDirection::Down => {
-                        enigo.key(Key::PageDown, enigo::Direction::Click);
+                        enigo.key(Key::PageDown, Direction::Click).ok();
                     }
                     ScrollDirection::Left => {
-                        enigo.key(Key::Control, enigo::Direction::Press);
-                        enigo.key(Key::PageUp, enigo::Direction::Click);
-                        enigo.key(Key::Control, enigo::Direction::Release);
+                        enigo.key(Key::Control, Direction::Press).ok();
+                        enigo.key(Key::PageUp, Direction::Click).ok();
+                        enigo.key(Key::Control, Direction::Release).ok();
                     }
                     ScrollDirection::Right => {
-                        enigo.key(Key::Control, enigo::Direction::Press);
-                        enigo.key(Key::PageDown, enigo::Direction::Click);
-                        enigo.key(Key::Control, enigo::Direction::Release);
+                        enigo.key(Key::Control, Direction::Press).ok();
+                        enigo.key(Key::PageDown, Direction::Click).ok();
+                        enigo.key(Key::Control, Direction::Release).ok();
                     }
                 }
             }
@@ -621,8 +615,16 @@ impl LinuxUIAutomation {
         };
 
         atspi::proxy::accessible::AccessibleProxy::builder(self.connection.connection())
-            .destination(bus_name)?
-            .path(path)?
+            .destination(bus_name)
+            .map_err(|e| UIError {
+                message: format!("Failed to set destination: {}", e),
+                error_type: UIErrorType::NotFound,
+            })?
+            .path(path)
+            .map_err(|e| UIError {
+                message: format!("Failed to set path: {}", e),
+                error_type: UIErrorType::NotFound,
+            })?
             .build()
             .await
             .map_err(|e| UIError {
@@ -631,13 +633,21 @@ impl LinuxUIAutomation {
             })
     }
 
-    async fn get_action_proxy(
+    async fn get_action_proxy<'a>(
         &self,
-        accessible: &atspi::proxy::accessible::AccessibleProxy<'_>,
-    ) -> Result<atspi::proxy::action::ActionProxy<'_>, UIError> {
+        accessible: &atspi::proxy::accessible::AccessibleProxy<'a>,
+    ) -> Result<atspi::proxy::action::ActionProxy<'a>, UIError> {
         atspi::proxy::action::ActionProxy::builder(self.connection.connection())
-            .destination(accessible.inner().destination().clone())?
-            .path(accessible.inner().path().clone())?
+            .destination(accessible.inner().destination().clone())
+            .map_err(|e| UIError {
+                message: format!("Failed to set destination: {}", e),
+                error_type: UIErrorType::NotSupported,
+            })?
+            .path(accessible.inner().path().clone())
+            .map_err(|e| UIError {
+                message: format!("Failed to set path: {}", e),
+                error_type: UIErrorType::NotSupported,
+            })?
             .build()
             .await
             .map_err(|e| UIError {
@@ -646,13 +656,21 @@ impl LinuxUIAutomation {
             })
     }
 
-    async fn get_component_proxy(
+    async fn get_component_proxy<'a>(
         &self,
-        accessible: &atspi::proxy::accessible::AccessibleProxy<'_>,
-    ) -> Result<atspi::proxy::component::ComponentProxy<'_>, UIError> {
+        accessible: &atspi::proxy::accessible::AccessibleProxy<'a>,
+    ) -> Result<atspi::proxy::component::ComponentProxy<'a>, UIError> {
         atspi::proxy::component::ComponentProxy::builder(self.connection.connection())
-            .destination(accessible.inner().destination().clone())?
-            .path(accessible.inner().path().clone())?
+            .destination(accessible.inner().destination().clone())
+            .map_err(|e| UIError {
+                message: format!("Failed to set destination: {}", e),
+                error_type: UIErrorType::NotSupported,
+            })?
+            .path(accessible.inner().path().clone())
+            .map_err(|e| UIError {
+                message: format!("Failed to set path: {}", e),
+                error_type: UIErrorType::NotSupported,
+            })?
             .build()
             .await
             .map_err(|e| UIError {
@@ -661,13 +679,21 @@ impl LinuxUIAutomation {
             })
     }
 
-    async fn get_text_proxy(
+    async fn get_text_proxy<'a>(
         &self,
-        accessible: &atspi::proxy::accessible::AccessibleProxy<'_>,
-    ) -> Result<atspi::proxy::text::TextProxy<'_>, UIError> {
+        accessible: &atspi::proxy::accessible::AccessibleProxy<'a>,
+    ) -> Result<atspi::proxy::text::TextProxy<'a>, UIError> {
         atspi::proxy::text::TextProxy::builder(self.connection.connection())
-            .destination(accessible.inner().destination().clone())?
-            .path(accessible.inner().path().clone())?
+            .destination(accessible.inner().destination().clone())
+            .map_err(|e| UIError {
+                message: format!("Failed to set destination: {}", e),
+                error_type: UIErrorType::NotSupported,
+            })?
+            .path(accessible.inner().path().clone())
+            .map_err(|e| UIError {
+                message: format!("Failed to set path: {}", e),
+                error_type: UIErrorType::NotSupported,
+            })?
             .build()
             .await
             .map_err(|e| UIError {
@@ -676,13 +702,21 @@ impl LinuxUIAutomation {
             })
     }
 
-    async fn get_editable_text_proxy(
+    async fn get_editable_text_proxy<'a>(
         &self,
-        accessible: &atspi::proxy::accessible::AccessibleProxy<'_>,
-    ) -> Result<atspi::proxy::editable_text::EditableTextProxy<'_>, UIError> {
+        accessible: &atspi::proxy::accessible::AccessibleProxy<'a>,
+    ) -> Result<atspi::proxy::editable_text::EditableTextProxy<'a>, UIError> {
         atspi::proxy::editable_text::EditableTextProxy::builder(self.connection.connection())
-            .destination(accessible.inner().destination().clone())?
-            .path(accessible.inner().path().clone())?
+            .destination(accessible.inner().destination().clone())
+            .map_err(|e| UIError {
+                message: format!("Failed to set destination: {}", e),
+                error_type: UIErrorType::NotSupported,
+            })?
+            .path(accessible.inner().path().clone())
+            .map_err(|e| UIError {
+                message: format!("Failed to set path: {}", e),
+                error_type: UIErrorType::NotSupported,
+            })?
             .build()
             .await
             .map_err(|e| UIError {
@@ -691,13 +725,21 @@ impl LinuxUIAutomation {
             })
     }
 
-    async fn get_value_proxy(
+    async fn get_value_proxy<'a>(
         &self,
-        accessible: &atspi::proxy::accessible::AccessibleProxy<'_>,
-    ) -> Result<atspi::proxy::value::ValueProxy<'_>, UIError> {
+        accessible: &atspi::proxy::accessible::AccessibleProxy<'a>,
+    ) -> Result<atspi::proxy::value::ValueProxy<'a>, UIError> {
         atspi::proxy::value::ValueProxy::builder(self.connection.connection())
-            .destination(accessible.inner().destination().clone())?
-            .path(accessible.inner().path().clone())?
+            .destination(accessible.inner().destination().clone())
+            .map_err(|e| UIError {
+                message: format!("Failed to set destination: {}", e),
+                error_type: UIErrorType::NotSupported,
+            })?
+            .path(accessible.inner().path().clone())
+            .map_err(|e| UIError {
+                message: format!("Failed to set path: {}", e),
+                error_type: UIErrorType::NotSupported,
+            })?
             .build()
             .await
             .map_err(|e| UIError {
@@ -746,9 +788,23 @@ impl LinuxUIAutomation {
         &self,
         obj_ref: &atspi::ObjectRefOwned,
     ) -> Result<atspi::proxy::accessible::AccessibleProxy<'static>, UIError> {
+        let name = obj_ref.name().cloned().ok_or_else(|| UIError {
+            message: "Object reference has no name".to_string(),
+            error_type: UIErrorType::NotFound,
+        })?;
+        let path = obj_ref.path().clone();
+
         atspi::proxy::accessible::AccessibleProxy::builder(self.connection.connection())
-            .destination(obj_ref.name.clone())?
-            .path(obj_ref.path.clone())?
+            .destination(name)
+            .map_err(|e| UIError {
+                message: format!("Failed to set destination: {}", e),
+                error_type: UIErrorType::OperationFailed,
+            })?
+            .path(path)
+            .map_err(|e| UIError {
+                message: format!("Failed to set path: {}", e),
+                error_type: UIErrorType::OperationFailed,
+            })?
             .build()
             .await
             .map_err(|e| UIError {
@@ -830,7 +886,7 @@ impl LinuxUIAutomation {
         proxy: &atspi::proxy::accessible::AccessibleProxy<'_>,
     ) -> Result<ControlInfo, UIError> {
         let name = proxy.name().await.unwrap_or_default();
-        let _role = proxy.get_role().await.unwrap_or(Role::Invalid);
+        let role = proxy.get_role().await.unwrap_or(Role::Invalid);
         let control_type = self.role_to_control_type(role);
 
         let automation_id = proxy.accessible_id().await.ok();
@@ -870,7 +926,7 @@ impl LinuxUIAutomation {
 
     fn role_to_control_type(&self, role: Role) -> ControlType {
         match role {
-            Role::PushButton | Role::ToggleButton => ControlType::Button,
+            Role::Button | Role::ToggleButton => ControlType::Button,
             Role::CheckBox => ControlType::CheckBox,
             Role::ComboBox => ControlType::ComboBox,
             Role::Entry | Role::PasswordText => ControlType::Edit,

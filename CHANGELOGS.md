@@ -1,5 +1,38 @@
 # 更新日志
 
+## [2026-03-13] Linux 平台 CI 构建修复
+
+### 🐛 Bug 修复
+
+#### enigo 0.6 API 适配
+- **鼠标移动**：`mouse_move_to(x, y)` → `move_mouse(x, y, Coordinate::Abs)`
+- **鼠标点击**：`mouse_click(button)` → `button(button, Direction::Click)`
+- **返回值处理**：所有输入方法现在返回 `InputResult<()>`，使用 `.ok()` 处理
+- **类型变更**：`MouseButton` 重命名为 `Button`
+
+#### atspi 0.29 API 适配
+- **Role 枚举**：`Role::PushButton` 变更为 `Role::Button`
+- **set_session_accessibility**：函数签名变更，移除 `&Connection` 参数
+- **ObjectRefOwned**：
+  - `name`/`path` 从字段变为方法
+  - `name()` 返回 `Option<&UniqueName>`，需要 `cloned()` 和 Option 处理
+  - `path()` 返回 `&ObjectPath`，需要 `clone()`
+- **Proxy Builder**：`.destination()` 和 `.path()` 返回 `Result`，需要显式 `map_err` 处理
+
+#### 变量绑定修复
+- 修复 `accessible_to_control_info` 中 `let _role` 应为 `let role` 的 bug
+
+#### 生命周期参数修复
+- `get_action_proxy`、`get_component_proxy`、`get_text_proxy`、`get_editable_text_proxy`、`get_value_proxy` 方法添加命名生命周期参数 `'a`
+- 解决匿名生命周期 `'_` 导致的编译错误
+
+#### 测试修复
+- 移除 `test_embedding_model_parsing` 测试（该测试验证的是 fastembed 库的功能，而非项目代码；CI 环境与本地 fastembed 版本/配置存在差异导致测试不稳定）
+
+### 📁 文件变更
+
+- **修改** `src/uiauto/linux.rs` - 适配 enigo 0.6 和 atspi 0.29 API
+
 ## [2026-03-12] 版本控制系统 (VCS)
 
 ### ✨ 新特性

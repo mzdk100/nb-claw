@@ -15,7 +15,7 @@ futures-util = "0.3.32"
 git2 = "0.20"
 pyo3 = { version = "0.28.2", features = ["auto-initialize", "experimental-async"] }
 postcard = { version = "1.1.1", features = ["alloc"] }
-regex = "1"
+regex = "1.12.3"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 tokio = { version = "1.50.0", features = ["full"] }
@@ -34,8 +34,8 @@ uiautomation = { version = "0.24.4", features = ["input", "control", "pattern"] 
 
 [target.'cfg(target_os = "linux")'.dependencies]
 atspi = { version = "0.29.0", features = ["connection", "proxies", "tokio"] }
-enigo = "0.6"
-zbus = "5"
+enigo = "0.6.1"
+zbus = "5.14.0"
 
 [dev-dependencies]
 tempfile = "3.26.0"
