@@ -333,7 +333,8 @@ Importing builtin module `vcs`, you can track file versions, create snapshots, a
                     ..Default::default()
                 };
                 let mut tasks = Vec::new();
-                let mut content = String::new();
+                let mut temp_content = String::new();
+                let mut full_content = String::new();
                 let mut script = String::new();
 
                 // Collect streaming response with retry logic
@@ -382,7 +383,6 @@ Importing builtin module `vcs`, you can track file versions, create snapshots, a
 
                     let mut iter = chunk.choices.into_iter();
                     while let Some(choice) = iter.next() {
-
                         // In streaming mode, we need to accumulate content from delta
                         // Check for tool calls in the delta
                         if let Some(tool_calls) = choice.delta.tool_calls  {
@@ -398,15 +398,17 @@ Importing builtin module `vcs`, you can track file versions, create snapshots, a
 
                         // Collect content from delta
                         if let Some(c) = &choice.delta.content {
-                            content.push_str(&c);
+                            temp_content.push_str(&c);
                             if let Some((i, lang)) = &marker_tool_call_start && !marker_tool_call_end {
-                                if let Some(j) = content.rfind("```") && j > *i && (lang == "python" || lang == "shell") {
+                                if let Some(j) = temp_content.rfind("```") && j > *i && (lang == "python" || lang == "shell") {
                                     let (tool_name, arg_name) = if lang == "python" {
                                         ("run_py", "code")
                                     } else {
                                         ("run_cmd", "command")
                                     };
-                                    let args = json![{arg_name: &script}];
+                                    // Remove trailing backticks from script due to streaming token boundaries
+                                    let code = script.trim_end_matches('`');
+                                    let args = json![{arg_name: code}];
                                     script.clear();
 
                                     let tool_registry = self.tool_registry.clone();
@@ -420,8 +422,12 @@ Importing builtin module `vcs`, you can track file versions, create snapshots, a
                                     script.push_str(c);
                                 }
                             } else if marker_tool_call_end {
+                                full_content.push_str(&temp_content);
+                                temp_content = c.into();
+                                marker_tool_call_start = None;
+                                marker_tool_call_end = false;
                                 yield c.into();
-                            } else if let Some((i, lang, _, right)) = find_markdown_block_start(&content) {
+                            } else if let Some((i, lang, _, right)) = find_markdown_block_start(&temp_content) {
                                 if !lang.is_empty() {
                                     script.push_str(right);
                                     marker_tool_call_start = Some((i, lang.to_owned()));
@@ -437,10 +443,13 @@ Importing builtin module `vcs`, you can track file versions, create snapshots, a
                         }
                     }
                 }
+                if !temp_content.is_empty() {
+                    full_content.push_str(&temp_content);
+                }
 
                 let mut new_messages = current_messages.clone();
                 // Add the cleaned message (without code blocks)
-                new_messages.push(Message::assistant(content.clone()));
+                new_messages.push(Message::assistant(full_content.clone()));
 
                 for (name, res) in tasks.drain(..) {
                     let res = res.await??;
@@ -567,6 +576,29 @@ memory.remember("important insight", importance=0.6)
             let content = choice.message.content_as_text();
             if !content.is_empty() {
                 info!("Memory consolidation response: {}", content);
+
+                // Handle small models that output code in markdown blocks instead of tool calls
+                if let Some((_, lang, _, code_start)) = find_markdown_block_start(&content)
+                    && lang == "python"
+                {
+                    // Extract code until closing ```
+                    let code = if let Some(end_pos) = code_start.find("```") {
+                        &code_start[..end_pos]
+                    } else {
+                        code_start
+                    };
+
+                    if !code.trim().is_empty() {
+                        let result = tool_registry
+                            .execute_tool(
+                                "run_py",
+                                &json!({ "code": code.trim() }),
+                                Uuid::new_v4().into(),
+                            )
+                            .await;
+                        info!("Memory consolidation (from markdown): {:?}", result);
+                    }
+                }
             }
         }
 
@@ -595,14 +627,17 @@ fn find_markdown_block_start(
             return false;
         }
 
-        let start = s.starts_with(start_word);
+        if !s.starts_with(start_word) {
+            return false;
+        }
+
         let (_, q) = s.split_at(start_word.len());
         if q.is_empty() {
             let j = content.len() - s.len() + start_word.len();
             let (_, q) = content.split_at(j);
             *out = q;
             true
-        } else if start && q.starts_with([' ', '\n']) {
+        } else if q.starts_with([' ', '\n']) {
             let j = content.len() - s.len() + start_word.len() + 1;
             let (_, q) = content.split_at(j);
             *out = q;

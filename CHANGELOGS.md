@@ -1,5 +1,31 @@
 # 更新日志
 
+## [2026-03-14] 记忆巩固与小模型兼容性修复
+
+### 🐛 Bug 修复
+
+#### UTF-8 边界截断崩溃（find_markdown_block_start）
+- **问题**：`mat` 函数在检查 `starts_with` 之前就执行 `split_at(start_word.len())`
+- **触发条件**：字符串以多字节 UTF-8 字符（如中文）开头，且 `start_word.len()` 落在字符边界内
+- **示例**：`s = "这是"`，`start_word = "py"`（长度 2），中文字符 '这' 占 3 字节，`split_at(2)` 切割到字符中间
+- **修复**：先检查 `starts_with` 是否匹配，不匹配直接返回 `false`，只有匹配时才执行 `split_at`
+
+#### 流式工具调用 Markdown 结束符残留
+- **问题**：流式传输时，不同模型的分词器可能导致 token 边界差异，代码块结束符 "```" 可能被拆分成多个 token
+- **现象**：`script` 末尾可能残留一个或多个 "`" 字符，导致 Python 语法错误
+- **修复**：执行代码前使用 `trim_end_matches('`')` 移除末尾所有反引号
+
+### ✨ 改进
+
+#### 小模型记忆巩固兼容性
+- **问题**：小模型可能无法输出标准的工具调用格式，而是直接返回 markdown 代码块
+- **现象**：记忆巩固时模型输出 ` ```python\nimport memory\nmemory.remember(...)\n``` ` 而非调用 `run_py` 工具
+- **修复**：在 `consolidate_memory` 中检测并执行 `content` 中的 Python markdown 代码块
+
+### 📁 文件变更
+
+- **修改** `src/llm/client.rs` - 修复 UTF-8 截断 bug、流式 Markdown 结束符残留、小模型兼容性
+
 ## [2026-03-13] Linux 平台 CI 构建修复
 
 ### 🐛 Bug 修复
