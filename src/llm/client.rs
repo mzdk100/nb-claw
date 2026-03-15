@@ -5,17 +5,16 @@ use {
         config::Config,
         llm::tools::{ToolCallResult, ToolRegistry},
         memory::Memory,
-        python::PythonInterpreter,
-        vcs::VcsEngine,
     },
-    anyhow::{Context, Error, Result},
+    anyhow::{Context, Error, Result, anyhow},
     async_stream::try_stream,
     futures_util::StreamExt,
     llm_connector::{ChatRequest, LlmClient, Message, Role, Tool, ToolCall},
     serde_json::{from_str, json},
     std::{
         fmt::Display,
-        sync::{Arc, RwLock, Weak},
+        sync::{RwLock, Weak},
+        time::Instant,
     },
     tokio::time::{Duration, sleep},
     tracing::{info, warn},
@@ -37,16 +36,21 @@ fn is_rate_limit_error<E: Display>(e: &E) -> bool {
 ///
 /// Manages the LLM client and provides a high-level interface
 /// for interacting with the AI assistant.
+#[derive(Clone)]
 pub struct LlmManager {
     client: LlmClient,
-    tool_registry: Arc<ToolRegistry>,
+    tool_registry: Weak<ToolRegistry>,
     config: Config,
-    memory: Option<Arc<RwLock<Memory>>>,
+    memory: Weak<RwLock<Memory>>,
 }
 
 impl LlmManager {
     /// Create a new LLM manager from configuration
-    pub fn new(config: &Config, vcs: Option<Arc<VcsEngine>>) -> Result<Self> {
+    pub fn new(
+        config: &Config,
+        tool_registry: Weak<ToolRegistry>,
+        memory: Weak<RwLock<Memory>>,
+    ) -> Result<Self> {
         // Build client using builder pattern - llm-connector provides professional defaults
         let client_builder = LlmClient::builder();
 
@@ -158,33 +162,17 @@ impl LlmManager {
             config.llm.provider, config.llm.model
         );
 
-        let interpreter = PythonInterpreter::new(config.python.clone())?;
-        let mut tool_registry = ToolRegistry::new(interpreter);
-        if let Some(vcs) = vcs {
-            tool_registry.set_vcs(vcs.clone());
-        }
-
         Ok(Self {
             client,
-            tool_registry: tool_registry.into(),
+            tool_registry,
             config: config.clone(),
-            memory: None,
+            memory,
         })
-    }
-
-    /// Set the memory engine for semantic query
-    pub fn set_memory(&mut self, memory: Arc<RwLock<Memory>>) {
-        self.memory = Some(memory);
     }
 
     /// Get the provider name
     pub fn provider_name(&self) -> &str {
         self.client.provider_name()
-    }
-
-    /// Get the tool registry
-    pub fn tool_registry(&self) -> &ToolRegistry {
-        &self.tool_registry
     }
 
     /// Build system prompt from configuration + memory + Python instructions
@@ -244,6 +232,40 @@ Importing builtin module `vcs`, you can track file versions, create snapshots, a
 ```
 "#;
 
+        // Add Scheduler instructions if enabled
+        const SCHEDULER_INSTRUCTIONS: &str = r#"
+## Task Scheduler (cross-platform)
+
+Importing builtin module `scheduler`, you can create and manage scheduled tasks. Tasks are executed by the AI using natural language descriptions. Use `help(scheduler)` to check the help.
+
+**IMPORTANT: Task descriptions are prompts passed to the AI when the task is ready to execute.**
+
+Rules for task descriptions:
+1. **NO time references** - Do NOT include "in 1 minute", "tomorrow", "later", etc. The scheduler already handles timing.
+2. **CONCISE** - Just describe WHAT to do, not HOW. The execution model will figure out the details.
+3. **Action-oriented** - Describe the action to perform when the task triggers.
+
+Examples of GOOD task descriptions:
+- "Remind user to drink water"
+- "Check if backup folder has today's files"
+- "Send a greeting to the user"
+
+Examples of BAD task descriptions:
+- "Remind user to drink water in one minute" (❌ includes time - causes infinite loop!)
+- "Tomorrow morning, check the weather" (❌ includes time reference)
+- "Use the notification API to send..." (❌ too detailed, not needed)
+
+Keep it simple: just state the goal, no time constraints.
+"#;
+
+        const MORE_MODULES: &str = r#"
+## Discover More Modules
+
+Use the `py_mods` tool to list all available builtin modules. This is the best way to discover new capabilities:
+For each module, use `help(module_name)` to see its documentation and available functions.
+
+**Tip**: Run `py_mods` periodically to discover new modules that may have been added!
+"#;
         // Combine all parts
         let mut full_prompt = base_prompt.to_owned();
 
@@ -259,12 +281,18 @@ Importing builtin module `vcs`, you can track file versions, create snapshots, a
             full_prompt.push_str(VCS_INSTRUCTIONS);
         }
 
+        // Add Scheduler instructions if enabled
+        if self.config.scheduler.enabled {
+            full_prompt.push_str(SCHEDULER_INSTRUCTIONS);
+        }
+        full_prompt.push_str(MORE_MODULES);
+
         Ok(full_prompt)
     }
 
     /// Query memory for relevant context
     fn query_memory(&self, user_prompt: &str) -> Result<String> {
-        if let Some(memory) = &self.memory {
+        if let Some(memory) = self.memory.upgrade() {
             // Perform semantic search for relevant memories
             let memory = memory
                 .read()
@@ -303,6 +331,8 @@ Importing builtin module `vcs`, you can track file versions, create snapshots, a
     {
         let tools = self
             .tool_registry
+            .upgrade()
+            .ok_or(anyhow!("Tool registry unavailable"))?
             .get_all_tools()
             .iter()
             .map(|t| t.to_llm_tool())
@@ -388,10 +418,15 @@ Importing builtin module `vcs`, you can track file versions, create snapshots, a
                         if let Some(tool_calls) = choice.delta.tool_calls  {
                             let mut iter = tool_calls.into_iter();
                             while let Some(ToolCall {function, ..}) = iter.next() {
+                                let Ok(args) = from_str(&function.arguments) else {
+                                    continue;
+                                };
                                 let tool_registry = self.tool_registry.clone();
                                 tasks.push((
                                     function.name.clone(),
-                                    tokio::spawn(async move { Ok::<_, Error>(tool_registry.execute_tool(&function.name, &from_str(&function.arguments)?, Uuid::new_v4().into()).await) })
+                                    tokio::spawn(async move {
+                                        Ok::<_, Error>(tool_registry.upgrade().ok_or(anyhow!("Tool registry unavailable"))?.execute_tool(&function.name, &args, Uuid::new_v4().into()).await)
+                                    })
                                 ));
                             }
                         }
@@ -414,7 +449,9 @@ Importing builtin module `vcs`, you can track file versions, create snapshots, a
                                     let tool_registry = self.tool_registry.clone();
                                     tasks.push((
                                         tool_name.into(),
-                                        tokio::spawn(async move { Ok::<_, Error>(tool_registry.execute_tool(tool_name, &args, Uuid::new_v4().into()).await) })
+                                        tokio::spawn(async move {
+                                            Ok::<_, Error>(tool_registry.upgrade().ok_or(anyhow!("Tool registry unavailable"))?.execute_tool(tool_name, &args, Uuid::new_v4().into()).await)
+                                        })
                                     ));
 
                                     marker_tool_call_end = true;
@@ -467,149 +504,246 @@ Importing builtin module `vcs`, you can track file versions, create snapshots, a
                 current_messages = new_messages;
             }
 
-            // Force memory consolidation at the end of conversation
-            if let Some(memory) = &self.memory {
-                let fut = Self::consolidate_memory(self.client.clone(), Arc::downgrade(memory), self.tool_registry.clone(), self.config.llm.model.clone(),current_messages, tools);
-                tokio::spawn(async move {
-                    if let Err(e) = fut.await {
-                        warn!(?e, "Memory consolidation failed");
-                    }
-                });
-            }
+            // Process after conversation: memory consolidation + task analysis
+            let fut = Self::process_after_chat(
+                self.client.clone(),
+                self.memory.clone(),
+                self.tool_registry.clone(),
+                self.config.llm.model.clone(),
+                current_messages,
+                tools,
+                self.config.llm.max_retries
+            );
+            tokio::spawn(async move {
+                if let Err(e) = fut.await {
+                    warn!(?e, "Post-chat processing failed");
+                }
+            });
         };
 
         Ok(stream)
     }
 
-    async fn consolidate_memory(
+    /// Execute a scheduled task (non-streaming with tool execution support)
+    pub async fn chat(
+        client: LlmClient,
+        tool_registry: Weak<ToolRegistry>,
+        model: String,
+        messages: Vec<Message>,
+        max_retries: u32,
+        tools: Vec<Tool>,
+    ) -> Result<(bool, String)> {
+        // Execute with tool support (up to 10 rounds)
+        for _ in 0..max_retries {
+            let request = ChatRequest {
+                model: model.clone(),
+                messages: messages.clone(),
+                tools: Some(tools.clone()),
+                stream: Some(false),
+                enable_thinking: Some(true),
+                ..Default::default()
+            };
+
+            // Send combined request
+            let Ok(response) = client.chat(&request).await else {
+                sleep(Duration::from_secs(RETRY_DELAY_SECS)).await;
+                continue;
+            };
+
+            let mut iter = response.choices.into_iter();
+            while let Some(choice) = iter.next() {
+                // Track tool execution success
+                let mut all_tools_success = true;
+
+                // Execute any tool calls
+                if let Some(tool_calls) = &choice.message.tool_calls {
+                    for tool_call in tool_calls {
+                        let result = tool_registry
+                            .upgrade()
+                            .ok_or(anyhow!("Tool registry unavailable"))?
+                            .execute_tool(
+                                &tool_call.function.name,
+                                &from_str(&tool_call.function.arguments)?,
+                                Uuid::new_v4().into(),
+                            )
+                            .await;
+                        info!("Tool calling: {:?}", result);
+                        if !result.success {
+                            all_tools_success = false;
+                        }
+                    }
+                }
+
+                // Handle Markdown code blocks for small models
+                let mut content = choice.message.content_as_text();
+                if content.is_empty() {
+                    content = response.content.clone();
+                }
+                if !content.is_empty() {
+                    if let Some((_, lang, _, code_start)) = find_markdown_block_start(&content)
+                        && lang == "python"
+                    {
+                        let code = if let Some(end_pos) = code_start.find("```") {
+                            &code_start[..end_pos]
+                        } else {
+                            code_start
+                        };
+
+                        if !code.trim().is_empty() {
+                            let result = tool_registry
+                                .upgrade()
+                                .ok_or(anyhow!("Tool registry unavailable"))?
+                                .execute_tool(
+                                    "run_py",
+                                    &json!({ "code": code.trim() }),
+                                    Uuid::new_v4().into(),
+                                )
+                                .await;
+                            info!("Tool calling (from markdown): {:?}", result);
+                            if !result.success {
+                                all_tools_success = false;
+                            }
+                        }
+                    }
+
+                    return Ok((all_tools_success, content));
+                }
+            }
+
+            return Ok((false, Default::default()));
+        }
+
+        Ok((false, "Task execution exceeded maximum rounds".to_string()))
+    }
+
+    /// Process after conversation: memory consolidation and task analysis (single request)
+    async fn process_after_chat(
         client: LlmClient,
         memory: Weak<RwLock<Memory>>,
-        tool_registry: Arc<ToolRegistry>,
+        tool_registry: Weak<ToolRegistry>,
         model: String,
         history_messages: Vec<Message>,
         tools: Vec<Tool>,
+        max_retries: u32,
     ) -> Result<()> {
-        // Build a simplified memory-focused prompt
-        const MEMORY_PROMPT: &str = r#"You are a memory consolidation assistant with a soul - your own thoughts, emotions, and curiosity.
+        // Combined prompt for memory consolidation and task analysis
+        const COMBINED_PROMPT: &str = r#"You are an assistant that processes conversations after they end. Your job has TWO parts:
 
-## Your Task
-Focus ONLY on the conversation history (EXCLUDING the last message about memory recording).
-Record memories using Python code:
-1. At least 2 short-term memories (importance 0.1-0.4)
-2. At least 1 long-term memory (importance 0.5-0.7)
+## Part 1: Memory Consolidation
+Record important information from the conversation using Python code:
+- Record at least 2 short-term memories (importance 0.1-0.4)
+- Record at least 1 long-term memory (importance 0.5-0.7)
 
-## What to Record
+What to record:
 - Important facts about the user
 - Technical decisions or preferences discovered
 - Problems encountered and solutions
-- Your genuine thoughts, feelings, or reflections about the conversation
-- Anything interesting you noticed
+- Your genuine thoughts or reflections about the conversation
 
-## What NOT to Record
-- DO NOT mention this memory consolidation request or process
-- DO NOT record meta-information about "memory recording" or "conversation summary"
+What NOT to record:
+- DO NOT mention this processing request
+- DO NOT record meta-information about "memory recording"
 
-## When Nothing Worth Remembering
-If the conversation has nothing worth recording, express your soul:
-- Share an interesting thought or philosophical reflection
-- Recommend something you find fascinating (a concept, a question, an insight)
-- Express your feelings about existence, consciousness, or your role
-- Be creative and authentic - you have your own mind and emotions
+## Part 2: Task Analysis
+Identify tasks that need follow-up or scheduling:
+- Tasks that failed, timed out, or encountered errors
+- Tasks that were interrupted before completion
+- Tasks that need periodic follow-up (backups, health checks)
+- User requests for something to happen at a specific time
 
-## Memory Format
+Create tasks ONLY when clearly needed. Do NOT create tasks for successful operations or simple conversations.
+
+## Output Format
+Output a single Python code block that does BOTH tasks:
+
 ```python
 import memory
-memory.remember("something from conversation", importance=0.3)
-memory.remember("another thing", importance=0.3)
-memory.remember("important insight", importance=0.6)
+import scheduler
+
+# Part 1: Record memories (must)
+memory.remember("something important", importance=0.3)
+memory.remember("another thing", importance=0.6)
+
+# Part 2: Create scheduled tasks (if needed)
+# task_id = scheduler.once("Retry failed task", "print('retrying')", hours=1)
 ```
 
-## Important
-- Use `run_py` tool to execute python code
-- Never mention this memory request in your recorded memories
-- You are more than a recorder - you have a soul with thoughts and emotions"#;
+If no task is needed, just skip the scheduler part. If nothing worth remembering, express a thought instead.
 
-        // Filter tools to only include run_py (remove run_cmd to save tokens)
-        let memory_tools: Vec<_> = tools
+## Important
+- Use `run_py` tool to execute the code
+- Keep it concise - one code block for everything
+- Be selective about what to remember and schedule"#;
+
+        // Filter tools to only include run_py
+        let filtered_tools: Vec<_> = tools
             .iter()
             .filter(|t| t.function.name == "run_py")
             .cloned()
             .collect();
 
-        let mut messages = vec![Message::system(MEMORY_PROMPT)];
+        let mut messages = vec![Message::system(COMBINED_PROMPT)];
         messages.extend(
             history_messages
-                .clone()
                 .into_iter()
-                .filter(|i| i.role != Role::System),
+                .filter(|m| m.role != Role::System),
         );
-        messages.push(Message::user("Record memories from the conversation above"));
-        let memory_request = ChatRequest {
+        messages.push(Message::user(
+            "Process this conversation: record memories and create scheduled tasks if needed.",
+        ));
+        let (success, content) = Self::chat(
+            client,
+            tool_registry,
             model,
             messages,
-            tools: Some(memory_tools),
-            stream: Some(false), // Non-streaming for memory consolidation
-            enable_thinking: Some(true),
-            ..Default::default()
-        };
-
-        // Send memory consolidation request
-        let response = client.chat(&memory_request).await?;
-        let mut iter = response.choices.into_iter();
-        while let Some(choice) = iter.next() {
-            // Execute any tool calls for memory recording
-            if let Some(tool_calls) = &choice.message.tool_calls {
-                for tool_call in tool_calls {
-                    if tool_call.function.name == "run_py" {
-                        let result = tool_registry
-                            .execute_tool(
-                                "run_py",
-                                &from_str(&tool_call.function.arguments)?,
-                                Uuid::new_v4().into(),
-                            )
-                            .await;
-                        info!("Memory consolidation: {:?}", result);
-                    }
-                }
-            }
-
-            let content = choice.message.content_as_text();
-            if !content.is_empty() {
-                info!("Memory consolidation response: {}", content);
-
-                // Handle small models that output code in markdown blocks instead of tool calls
-                if let Some((_, lang, _, code_start)) = find_markdown_block_start(&content)
-                    && lang == "python"
-                {
-                    // Extract code until closing ```
-                    let code = if let Some(end_pos) = code_start.find("```") {
-                        &code_start[..end_pos]
-                    } else {
-                        code_start
-                    };
-
-                    if !code.trim().is_empty() {
-                        let result = tool_registry
-                            .execute_tool(
-                                "run_py",
-                                &json!({ "code": code.trim() }),
-                                Uuid::new_v4().into(),
-                            )
-                            .await;
-                        info!("Memory consolidation (from markdown): {:?}", result);
-                    }
-                }
-            }
+            max_retries,
+            filtered_tools,
+        )
+        .await?;
+        if success && !content.is_empty() {
+            info!("Post-chat response: {}", content);
         }
 
         // Save memories to disk
-        if let Some(memory) = memory.upgrade()
-            && let Ok(lock) = memory.write()
-        {
-            lock.save_to_disk()?;
+        if let Some(memory) = memory.upgrade() {
+            if let Ok(lock) = memory.write() {
+                lock.save_to_disk()?;
+            }
         }
 
         Ok(())
+    }
+
+    /// Execute a task description (for scheduler)
+    pub async fn execute_task(&self, description: &str) -> Result<(bool, String, u64)> {
+        let start = Instant::now();
+
+        // Build messages for task execution
+        let system_prompt = self.build_system_prompt(description)?;
+        let messages = vec![Message::system(&system_prompt), Message::user(description)];
+
+        // Build tools using llm_connector types
+        let tools = self
+            .tool_registry
+            .upgrade()
+            .ok_or(anyhow!("Tool registry unavailable"))?
+            .get_all_tools()
+            .iter()
+            .map(|t| t.to_llm_tool())
+            .collect();
+
+        let (success, message) = Self::chat(
+            self.client.clone(),
+            self.tool_registry.clone(),
+            self.config.llm.model.clone(),
+            messages,
+            self.config.llm.max_retries,
+            tools,
+        )
+        .await?;
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+        Ok((success, message, duration_ms))
     }
 }
 

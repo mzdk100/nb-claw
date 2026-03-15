@@ -7,6 +7,7 @@ mod config;
 mod llm;
 mod memory;
 mod python;
+mod scheduler;
 mod uiauto;
 mod vcs;
 
@@ -14,10 +15,10 @@ use {
     clap::Parser,
     config::{Config, EMBEDDING_MODELS, LLM_PROVIDERS},
     futures_util::{StreamExt, pin_mut},
-    llm::LlmManager,
+    llm::{LlmManager, ToolRegistry},
     memory::Memory,
     python::PythonInterpreter,
-    serde_json::json,
+    scheduler::{SchedulerEngine, TaskEvent},
     std::{
         io::{self, BufRead, Write},
         path::Path,
@@ -40,10 +41,6 @@ struct Args {
     /// Enable debug logging
     #[arg(short, long)]
     debug: bool,
-
-    /// Run in test mode (no interactive loop)
-    #[arg(long)]
-    test: bool,
 
     /// Initialize config file with default values
     #[arg(long, value_name = "PATH")]
@@ -107,10 +104,35 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
-    // Create LLM manager with memory and VCS support
-    let mut llm_manager = LlmManager::new(&config, vcs.clone())?;
-    llm_manager.set_memory(memory.clone());
+    // Create LLM manager with memory and VCS support (needed for scheduler executor)
+    let interpreter = PythonInterpreter::new(config.python.clone())?;
+    let tool_registry = Arc::new(ToolRegistry::new(
+        interpreter,
+        vcs.as_ref().map(Arc::downgrade),
+    ));
+    let llm_manager = Arc::new(LlmManager::new(
+        &config,
+        Arc::downgrade(&tool_registry),
+        Arc::downgrade(&memory),
+    )?);
     info!("LLM client initialized: {}", llm_manager.provider_name());
+
+    // Initialize Scheduler engine with executor (if enabled)
+    let scheduler = if config.scheduler.enabled {
+        match SchedulerEngine::new(config.scheduler.clone(), Arc::downgrade(&llm_manager)) {
+            Ok(engine) => {
+                info!("Scheduler engine initialized with executor");
+                Some(Arc::new(engine))
+            }
+            Err(e) => {
+                error!("Failed to initialize Scheduler engine: {}", e);
+                None
+            }
+        }
+    } else {
+        info!("Scheduler engine disabled");
+        None
+    };
 
     // Create memory manager for Python
     let memory_module = memory::create_memory_module(Arc::downgrade(&memory))?;
@@ -122,6 +144,14 @@ async fn main() -> anyhow::Result<()> {
     } else {
         None
     };
+    // Create and register Scheduler module for Python
+    let scheduler_module = if let Some(ref scheduler) = scheduler {
+        Some(scheduler::create_scheduler_module(Arc::downgrade(
+            scheduler,
+        ))?)
+    } else {
+        None
+    };
 
     // Register modules
     PythonInterpreter::register_module_global(memory_module);
@@ -130,12 +160,9 @@ async fn main() -> anyhow::Result<()> {
         PythonInterpreter::register_module_global(vcs_mod);
         info!("VCS module registered");
     }
-
-    // Test mode
-    if args.test {
-        info!("Running in test mode...");
-        run_test(&llm_manager).await?;
-        return Ok(());
+    if let Some(scheduler_mod) = scheduler_module {
+        PythonInterpreter::register_module_global(scheduler_mod);
+        info!("Scheduler module registered");
     }
 
     // Interactive mode
@@ -143,7 +170,7 @@ async fn main() -> anyhow::Result<()> {
     info!("  - Provider: {}", config.llm.provider);
     info!("  - Model: {}", config.llm.model);
 
-    run_interactive(&llm_manager).await?;
+    run_interactive(&llm_manager, scheduler).await?;
 
     Ok(())
 }
@@ -422,42 +449,11 @@ fn prompt_string_optional(prompt: &str) -> Option<String> {
     }
 }
 
-/// Run test mode
-async fn run_test(llm_manager: &LlmManager) -> anyhow::Result<()> {
-    info!("Testing Python interpreter...");
-    let interpreter = llm_manager.tool_registry();
-
-    // Test run_py tool
-    let result = interpreter
-        .execute_tool(
-            "run_py",
-            &json!({"code": "ret = 2 + 2"}),
-            "test-1".to_string(),
-        )
-        .await;
-    info!("run_py test result: {}", result.result);
-
-    // Test py_mods tool
-    let result = interpreter
-        .execute_tool("py_mods", &json!({}), "test-2".to_string())
-        .await;
-    info!("py_mods test result: {}", result.result);
-
-    // Test run_cmd tool
-    let result = interpreter
-        .execute_tool(
-            "run_cmd",
-            &json!({"command": "echo test"}),
-            "test-3".to_string(),
-        )
-        .await;
-    info!("run_cmd test result: {}", result.result);
-
-    Ok(())
-}
-
 /// Run interactive mode
-async fn run_interactive(llm_manager: &LlmManager) -> anyhow::Result<()> {
+async fn run_interactive(
+    llm_manager: &LlmManager,
+    scheduler: Option<Arc<SchedulerEngine>>,
+) -> anyhow::Result<()> {
     let mut std_in = BufReader::new(stdin());
     let mut std_out = BufWriter::new(stdout());
     std_out
@@ -473,52 +469,87 @@ async fn run_interactive(llm_manager: &LlmManager) -> anyhow::Result<()> {
         .write_all("───────────────────────\n\n".as_bytes())
         .await?;
 
+    // Subscribe to scheduler events if available
+    let mut event_rx = scheduler.as_ref().map(|s| s.subscribe());
+
     loop {
         std_out.write_all("You: ".as_bytes()).await?;
         std_out.flush().await?;
 
         let mut input = String::new();
-        std_in.read_line(&mut input).await?;
 
-        let input = input.trim();
+        // Use tokio::select! to handle both user input and scheduler events
+        tokio::select! {
+            // Handle user input
+            result = std_in.read_line(&mut input) => {
+                result?;
+                let input = input.trim();
 
-        if input.is_empty() {
-            continue;
-        }
+                if input.is_empty() {
+                    continue;
+                }
 
-        if input.eq_ignore_ascii_case("/quit") || input.eq_ignore_ascii_case("/exit") {
-            info!("Exiting...");
-            break;
-        }
+                if input.eq_ignore_ascii_case("/quit") || input.eq_ignore_ascii_case("/exit") {
+                    info!("Exiting...");
+                    break;
+                }
 
-        if input.eq_ignore_ascii_case("/help") {
-            print_help();
-            continue;
-        }
+                if input.eq_ignore_ascii_case("/help") {
+                    print_help();
+                    continue;
+                }
 
-        // Get response from LLM (with tool calling support) - streaming version
-        std_out.write_all("Assistant: ".as_bytes()).await?;
-        std_out.flush().await?;
+                // Get response from LLM (with tool calling support) - streaming version
+                std_out.write_all("Assistant: ".as_bytes()).await?;
+                std_out.flush().await?;
 
-        match llm_manager.chat_stream(input).await {
-            Ok(stream) => {
-                pin_mut!(stream);
-                while let Some(chunk) = stream.next().await {
-                    match chunk {
-                        Ok(content) => {
-                            std_out.write_all(content.as_bytes()).await?;
-                            std_out.flush().await?;
+                match llm_manager.chat_stream(input).await {
+                    Ok(stream) => {
+                        pin_mut!(stream);
+                        while let Some(chunk) = stream.next().await {
+                            match chunk {
+                                Ok(content) => {
+                                    std_out.write_all(content.as_bytes()).await?;
+                                    std_out.flush().await?;
+                                }
+                                Err(e) => error!(?e, "Stream error"),
+                            }
                         }
-                        Err(e) => error!(?e, "Stream error"),
+                        std_out.write_all(b"\n\n").await?;
+                    }
+                    Err(e) => {
+                        error!(?e, "Error getting response");
+                        std_out
+                            .write_all(format!("Error: {}\n", e).as_bytes())
+                            .await?;
                     }
                 }
-                std_out.write_all(b"\n\n").await?;
             }
-            Err(e) => {
-                error!(?e, "Error getting response");
-                std_out
-                    .write_all(format!("Error: {}\n", e).as_bytes())
-                    .await?;
+
+            // Handle scheduler events
+            Some(Ok(event)) = async {
+                if let Some(ref mut rx) = event_rx {
+                    Some(rx.recv().await)
+                } else {
+                    None
+                }
+            } => {
+                match event {
+                    TaskEvent::Ready(task) => {
+                        std_out
+                            .write_all(format!("\n📢 任务「{}」准备执行\n", task.name).as_bytes())
+                            .await?;
+                        std_out.flush().await?;
+                    }
+                    TaskEvent::Completed { name, success, message, .. } => {
+                        let status = if success { "✅ 完成" } else { "❌ 失败" };
+                        std_out
+                            .write_all(format!("\n📢 任务「{}」{} - {}\n", name, status, message).as_bytes())
+                            .await?;
+                        std_out.flush().await?;
+                    }
+                }
+                continue; // Skip to next iteration (will print "You: " at loop start)
             }
         }
     }

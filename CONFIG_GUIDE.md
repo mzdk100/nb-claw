@@ -42,7 +42,6 @@ nb-claw --config-wizard
 |------|------|
 | `-c, --config <PATH>` | 指定配置文件路径 |
 | `-d, --debug` | 启用调试日志 |
-| `--test` | 运行测试模式 |
 | `--init-config [PATH]` | 初始化配置文件（覆盖前会询问） |
 | `--config-wizard` | 运行交互式配置向导 |
 
@@ -64,6 +63,7 @@ nb-claw 会在以下位置按顺序查找配置文件：
 [memory]   # 记忆系统配置
 [memory.embedding]  # Embedding 模型配置
 [system]   # 系统行为配置
+[scheduler] # 任务调度配置
 ```
 
 ---
@@ -414,6 +414,77 @@ thinking_mode = false
 
 ---
 
+## Scheduler 配置 `[scheduler]`
+
+控制定时任务调度系统的行为。
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `enabled` | bool | `true` | 是否启用任务调度器 |
+| `storage_path` | string | `./data/scheduler/tasks.json` | 任务存储路径 |
+| `storage_format` | string | `json` | 存储格式：`json` 或 `binary` |
+| `check_interval` | u64 | `1` | 检查间隔（秒） |
+| `max_execution_time` | u64 | `60` | 单任务最大执行时间（秒） |
+| `max_history` | usize | `10` | 每个任务保留的执行记录数 |
+
+### 存储格式
+
+| 格式 | 说明 |
+|------|------|
+| `json` | JSON 格式（默认），人类可读，便于调试 |
+| `binary` | 二进制格式，使用 postcard 序列化，更紧凑快速 |
+
+### 调度类型
+
+调度器支持以下任务类型：
+
+| 类型 | 说明 | Python API |
+|------|------|------------|
+| 立即执行 | 创建后立即执行 | `scheduler.task(name, description)` |
+| 一次性 | 指定时间后执行一次 | `scheduler.once(name, description, hours=0, minutes=0)` |
+| 间隔 | 按固定间隔重复执行 | `scheduler.interval(name, description, minutes=60)` |
+| 每日 | 每天指定时间执行 | `scheduler.daily(name, description, hour=9, minute=0)` |
+| 每周 | 每周指定时间执行 | `scheduler.weekly(name, description, day=1, hour=9)` |
+
+### 配置示例
+
+**基础配置：**
+
+```toml
+[scheduler]
+enabled = true
+storage_path = "./data/scheduler/tasks.json"
+check_interval = 1  # 每秒检查一次
+```
+
+**生产环境配置：**
+
+```toml
+[scheduler]
+enabled = true
+storage_path = "/var/lib/nb-claw/scheduler/tasks.bin"
+storage_format = "binary"
+check_interval = 1
+max_execution_time = 120  # 单任务最长执行2分钟
+max_history = 20  # 保留更多执行记录
+```
+
+**禁用调度器：**
+
+```toml
+[scheduler]
+enabled = false
+```
+
+### 任务持久化
+
+任务数据会自动持久化到存储文件：
+- 程序退出时自动保存
+- 任务创建/更新/删除时立即保存
+- 程序启动时自动加载已有任务
+
+---
+
 ## 完整配置示例
 
 ### 最简配置
@@ -452,6 +523,10 @@ model = "Xenova/bge-small-en-v1.5"
 system_prompt = """You are nb-claw, an AI assistant with Python execution capability.
 Use the memory module to store and recall information."""
 max_context_length = 16000
+
+[scheduler]
+enabled = true
+storage_path = "./data/scheduler/tasks.json"
 ```
 
 ### 生产环境配置
@@ -491,6 +566,13 @@ Guidelines:
 - Execute Python code safely within the sandbox"""
 max_context_length = 64000
 thinking_mode = false
+
+[scheduler]
+enabled = true
+storage_path = "/var/lib/nb-claw/scheduler/tasks.bin"
+storage_format = "binary"
+max_execution_time = 120
+max_history = 20
 ```
 
 ---
@@ -563,18 +645,4 @@ nb-claw --config-wizard
 # 方式二：使用默认配置
 nb-claw --init-config
 # 然后编辑 config/config.toml 设置 API key
-```
-
----
-
-## 验证配置
-
-运行以下命令验证配置是否正确：
-
-```bash
-# 使用测试模式验证配置
-nb-claw --test
-
-# 启用调试日志查看详细信息
-nb-claw --debug
 ```

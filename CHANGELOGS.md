@@ -1,6 +1,44 @@
 # 更新日志
+## [2026-03-15] 调度器重构 & 系统优化
 
-## [2026-03-14] 记忆巩固与小模型兼容性修复
+### 🔄 重构
+
+#### 调度器 Python 模块 API 重构
+- **Blocking API**：所有方法改用 Tokio `blocking_send`/`blocking_recv`，替代异步 API 在同步上下文中的使用
+- **最佳实践**：遵循 Tokio 官方推荐，避免在同步代码中使用 `block_on`
+- 影响方法：`add_task_blocking`, `remove_task_blocking`, `get_task_blocking`, `list_tasks_blocking`, `enable_task_blocking`, `disable_task_blocking`, `trigger_task_blocking`, `get_events_blocking`
+
+### ✨ 改进
+
+#### 系统提示词优化
+- **简洁任务描述**：引导模型生成简短精炼的任务描述，适配小模型能力
+- **模块发现提示**：新增 "Discover More Modules" 部分，鼓励模型探索内置模块
+
+### 🔧 增强
+
+#### 失败任务重试机制
+- **独立重试延迟**：失败任务在 5 秒后自动重试
+- **schedule_retry 方法**：新增专门的重试调度方法，设置固定的重试间隔
+
+### 📁 文件变更
+
+- **修改** `src/scheduler/engine.rs` - 添加 blocking 方法和重试逻辑
+- **修改** `src/scheduler/py_module.rs` - 重构为 blocking API
+- **修改** `src/llm/client.rs` - 修复工具调用处理、成功状态追踪、系统提示词优化
+
+## [2026-03-14] 智能定时任务模块 & Bug 修复
+
+### ✨ 新特性
+
+#### 智能定时任务模块
+新增基于自然语言的定时任务系统：
+- **自然语言描述**：任务使用自然语言描述而非 Python 代码或命令行
+- **LLM 执行**：任务由 LLM 执行（类似用户对话）
+- **多种调度类型**：立即执行、一次性、间隔、每日、每周
+- **Python API**：`scheduler.task()`, `scheduler.once()`, `scheduler.interval()`, `scheduler.daily()`, `scheduler.weekly()`
+- **后台检查**：每秒检查一次是否有任务需要执行
+- **任务持久化**：支持 JSON 和 Binary 两种存储格式（配置 `storage_format`）
+- **状态监控**：交互模式下实时显示任务执行状态（开始/完成/失败）
 
 ### 🐛 Bug 修复
 

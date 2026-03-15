@@ -6,4 +6,4 @@
 mod client;
 mod tools;
 
-pub use client::LlmManager;
+pub use {client::LlmManager, tools::ToolRegistry};

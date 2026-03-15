@@ -147,6 +147,9 @@ pub struct Config {
     /// Version control system configuration
     #[serde(default)]
     pub vcs: VcsConfig,
+    /// Task scheduler configuration
+    #[serde(default)]
+    pub scheduler: SchedulerConfig,
 }
 
 /// LLM provider configuration
@@ -228,8 +231,9 @@ impl Default for PythonConfig {
                 "textwrap".into(),
                 "urllib".into(),
                 "memory".into(),
-                "uiauto".into(), // UI Automation module
-                "vcs".into(),    // Version control module
+                "uiauto".into(),    // UI Automation module
+                "vcs".into(),       // Version control module
+                "scheduler".into(), // Task scheduler module
             ],
         }
     }
@@ -374,6 +378,42 @@ impl Default for VcsConfig {
     }
 }
 
+/// Task scheduler configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchedulerConfig {
+    /// Enable task scheduler
+    #[serde(default = "default_scheduler_enabled")]
+    pub enabled: bool,
+    /// Path to store task data
+    #[serde(default = "default_scheduler_storage_path")]
+    pub storage_path: String,
+    /// Storage format: "json" or "binary"
+    #[serde(default)]
+    pub storage_format: StorageFormat,
+    /// Check interval in seconds
+    #[serde(default = "default_scheduler_check_interval")]
+    pub check_interval: u64,
+    /// Maximum execution time per task in seconds
+    #[serde(default = "default_scheduler_max_execution_time")]
+    pub max_execution_time: u64,
+    /// Maximum number of tasks to keep in history
+    #[serde(default = "default_scheduler_max_history")]
+    pub max_history: usize,
+}
+
+impl Default for SchedulerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            storage_path: "./data/scheduler/tasks".to_string(),
+            storage_format: StorageFormat::default(),
+            check_interval: 1,
+            max_execution_time: 60,
+            max_history: 10,
+        }
+    }
+}
+
 impl Default for SystemConfig {
     fn default() -> Self {
         Self {
@@ -407,6 +447,7 @@ impl Default for Config {
             memory: MemoryConfig::default(),
             system: SystemConfig::default(),
             vcs: VcsConfig::default(),
+            scheduler: SchedulerConfig::default(),
         }
     }
 }
@@ -601,6 +642,20 @@ impl Config {
         ));
         output.push_str(&format!("thinking_mode = {}\n", self.system.thinking_mode));
 
+        // Scheduler section
+        output.push_str("\n# Task Scheduler Configuration\n");
+        output.push_str("[scheduler]\n");
+        output.push_str(&format!("enabled = {}\n", self.scheduler.enabled));
+        output.push_str(&format!("storage_path = \"{}\"\n", self.scheduler.storage_path));
+        output.push_str(&format!("storage_format = \"{}\"  # json or binary\n",
+            match self.scheduler.storage_format {
+                StorageFormat::Json => "json",
+                StorageFormat::Binary => "binary",
+            }));
+        output.push_str(&format!("check_interval = {}  # seconds\n", self.scheduler.check_interval));
+        output.push_str(&format!("max_execution_time = {}  # seconds per task\n", self.scheduler.max_execution_time));
+        output.push_str(&format!("max_history = {}  # execution records per task\n", self.scheduler.max_history));
+
         Ok(output)
     }
 }
@@ -648,7 +703,9 @@ fn default_safe_modules() -> Vec<String> {
         "textwrap".into(),
         "urllib".into(),
         "memory".into(),
-        "uiauto".into(), // UI Automation module
+        "uiauto".into(),    // UI Automation module
+        "vcs".into(),       // Version control module
+        "scheduler".into(), // Task scheduler module
     ]
 }
 fn default_memory_path() -> String {
@@ -704,6 +761,21 @@ fn default_vcs_auto_track() -> bool {
 }
 fn default_vcs_max_file_size() -> usize {
     10 * 1024 * 1024 // 10MB
+}
+fn default_scheduler_enabled() -> bool {
+    true
+}
+fn default_scheduler_storage_path() -> String {
+    "./data/scheduler/tasks.json".to_string()
+}
+fn default_scheduler_check_interval() -> u64 {
+    1 // Check every second
+}
+fn default_scheduler_max_execution_time() -> u64 {
+    60
+}
+fn default_scheduler_max_history() -> usize {
+    10
 }
 
 #[cfg(test)]

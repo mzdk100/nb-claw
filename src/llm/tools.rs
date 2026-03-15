@@ -15,7 +15,7 @@ use {
     serde_json::{Value, json},
     std::{
         path::{Path, PathBuf},
-        sync::Arc,
+        sync::Weak,
     },
     tokio::process::Command,
     tracing::{debug, info},
@@ -79,26 +79,20 @@ impl ToolDefinition {
 /// Tool registry
 pub struct ToolRegistry {
     interpreter: PythonInterpreter,
-    vcs: Option<Arc<VcsEngine>>,
+    vcs: Option<Weak<VcsEngine>>,
 }
 
 impl ToolRegistry {
     /// Create a new tool registry
-    pub fn new(interpreter: PythonInterpreter) -> Self {
-        Self {
-            interpreter,
-            vcs: None,
-        }
-    }
-
-    /// Set VCS engine for automatic file tracking
-    pub fn set_vcs(&mut self, vcs: Arc<VcsEngine>) {
-        self.vcs = Some(vcs);
+    pub fn new(interpreter: PythonInterpreter, vcs: Option<Weak<VcsEngine>>) -> Self {
+        Self { interpreter, vcs }
     }
 
     /// Auto-track files from code/command
     fn auto_track_files(&self, content: &str, is_python: bool) {
-        if let Some(vcs) = &self.vcs {
+        if let Some(ref vcs) = self.vcs
+            && let Some(vcs) = vcs.upgrade()
+        {
             // Check if auto_track is enabled
             if !vcs.config().auto_track {
                 return;

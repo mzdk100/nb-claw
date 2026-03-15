@@ -544,6 +544,7 @@ mod tests {
         Ok(())
     }
 
+    //noinspection SpellCheckingInspection
     #[tokio::test]
     async fn test_module_accessible_in_function() -> Result<()> {
         // Test that imported modules are accessible inside functions
