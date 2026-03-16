@@ -6,10 +6,20 @@ $ErrorActionPreference = "Stop"
 $PYTHON_VERSION = "3.13.12"
 $PYTHON_URL = "https://www.python.org/ftp/python/$PYTHON_VERSION/python-$PYTHON_VERSION-embed-amd64.zip"
 $PACKAGE_DIR = "nb-claw"
-$TARGET_ZIP = "target/nb-claw-windows-x64.zip"
+
+# Read version from Cargo.toml
+$CARGO_CONTENT = Get-Content "Cargo.toml" -Raw
+if ($CARGO_CONTENT -match 'version\s*=\s*"([^"]+)"') {
+    $VERSION = $matches[1]
+} else {
+    $VERSION = "0.0.0"
+}
+
+$TARGET_ZIP = "target/nb-claw-${VERSION}-windows-x64.zip"
 $DIST_EXE = "target/release/nb-claw.exe"
 
 Write-Host "=== nb-claw Packaging Script ===" -ForegroundColor Cyan
+Write-Host "Version: $VERSION" -ForegroundColor Cyan
 
 # Step 1: Remove existing nb-claw directory if exists
 if (Test-Path $PACKAGE_DIR) {

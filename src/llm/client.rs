@@ -21,7 +21,7 @@ use {
     uuid::Uuid,
 };
 
-const RETRY_DELAY_SECS: u64 = 3;
+const RETRY_DELAY_SECS: u64 = 5;
 
 /// Check if error indicates rate limiting
 fn is_rate_limit_error<E: Display>(e: &E) -> bool {
